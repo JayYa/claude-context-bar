@@ -6,7 +6,7 @@
 
 🧠 **Live Context Tracking** — See your Claude Code context usage percentage right in the status bar
 
-⚡ **Per-Tab Monitoring** — Each Claude Code tab gets its own context indicator
+⚡ **Per-Tab (Session) Monitoring** — Each Claude Code tab gets its own context indicator
 
 🎯 **Fuzzy Emoji Matching** — Icons automatically match your project type based on name keywords:
 - 🎵 Music/audio projects
