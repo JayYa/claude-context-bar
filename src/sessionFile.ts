@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -56,4 +57,136 @@ export function decodeProjectPath(encodedName: string): { name: string; fullPath
     // Unix path: /Users/Ed/work/my-project
     const fullPath = '/' + parts.join('/');
     return { name: guessProjectName(parts), fullPath };
+}
+
+const EMPTY_TOKEN_USAGE: TokenUsage = {
+    inputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalTokens: 0,
+    model: '',
+    firstMessage: '',
+    sessionCreated: null,
+    wasCleared: false,
+};
+
+export async function getLatestTokenCount(
+    jsonlPath: string,
+    readFile?: (path: string) => string
+): Promise<TokenUsage> {
+    const read = readFile || ((p: string) => fs.readFileSync(p, 'utf-8'));
+
+    return new Promise((resolve) => {
+        try {
+            const stats = fs.statSync(jsonlPath);
+            if (stats.size === 0) {
+                resolve({ ...EMPTY_TOKEN_USAGE });
+                return;
+            }
+
+            // Read the file
+            const content = read(jsonlPath);
+            const lines = content.trim().split('\n');
+
+            // Scan backwards to find the last /clear command AND check for user activity after it
+            let lastClearIndex = -1;
+            let userMessagesAfterClear = 0;
+
+            for (let i = lines.length - 1; i >= 0; i--) {
+                const line = lines[i];
+                if (!line.trim()) continue;
+                try {
+                    const entry = JSON.parse(line);
+
+                    // Check for User message
+                    if (entry.type === 'user' && entry.message?.content) {
+                        const msgContent = entry.message.content;
+
+                        // Check for /clear command
+                        if (typeof msgContent === 'string' && msgContent.includes('<command-name>/clear</command-name>')) {
+                            lastClearIndex = i;
+                            break; // Found the latest clear, stop scanning
+                        }
+
+                        // If not clear, it's a user message after the clear point (since we're going backwards)
+                        userMessagesAfterClear++;
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            // Determine if session is effectively cleared
+            // It is cleared IF:
+            // 1. We found a /clear command
+            // 2. AND there are NO user messages after it (meaning the user hasn't continued the session yet)
+            const wasCleared = (lastClearIndex !== -1 && userMessagesAfterClear === 0);
+
+            // Calculate usage and finding first message starting from AFTER the clear
+            const startIndex = lastClearIndex >= 0 ? lastClearIndex + 1 : 0;
+
+            let firstMessage = '';
+            let sessionCreated: Date | null = null;
+            let model = '';
+            let finalUsage = { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0 };
+
+            // Forward pass from start index to find metadata and latest usage
+            for (let i = startIndex; i < lines.length; i++) {
+                const line = lines[i];
+                if (!line.trim()) continue;
+                try {
+                    const entry = JSON.parse(line);
+
+                    // Get session creation timestamp (first valid timestamp after clear)
+                    if (!sessionCreated && entry.timestamp) {
+                        sessionCreated = new Date(entry.timestamp);
+                    }
+
+                    // Look for first user message (for display)
+                    if (!firstMessage && entry.type === 'user' && entry.message?.content) {
+                        const msgContent = entry.message.content;
+                        // Skip command-related messages
+                        if (typeof msgContent === 'string' &&
+                            !msgContent.includes('<command-name>') &&
+                            !msgContent.includes('<local-command-') &&
+                            !msgContent.includes('Caveat:')) {
+                            firstMessage = msgContent.substring(0, 60);
+                        } else if (Array.isArray(msgContent) && msgContent[0]?.text) {
+                            firstMessage = msgContent[0].text.substring(0, 60);
+                        }
+                    }
+
+                    // Update latest usage/model as we go (capturing the last valid usage report)
+                    if (entry.message?.model) {
+                        model = entry.message.model;
+                    }
+                    if (entry.message?.usage || entry.usage) {
+                        const u = entry.message?.usage || entry.usage;
+                        finalUsage = {
+                            inputTokens: u.input_tokens || 0,
+                            cacheReadTokens: u.cache_read_input_tokens || 0,
+                            cacheCreationTokens: u.cache_creation_input_tokens || 0,
+                            totalTokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)
+                        };
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            resolve({
+                inputTokens: finalUsage.inputTokens,
+                cacheReadTokens: finalUsage.cacheReadTokens,
+                cacheCreationTokens: finalUsage.cacheCreationTokens,
+                totalTokens: finalUsage.totalTokens,
+                model,
+                firstMessage: firstMessage ? firstMessage + '...' : '',
+                sessionCreated,
+                wasCleared
+            });
+
+        } catch (e) {
+            resolve({ ...EMPTY_TOKEN_USAGE });
+        }
+    });
 }
