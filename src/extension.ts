@@ -1,27 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as path from 'path';
-import * as readline from 'readline';
-import { getContextLimitForModel } from './contextLimit';
-import { TokenUsage, getClaudeProjectsDir, decodeProjectPath, getLatestTokenCount } from './sessionFile';
-
-interface SessionInfo {
-    projectName: string;
-    projectPath: string;
-    sessionId: string;
-    sessionFile: string;
-    inputTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-    totalTokens: number;
-    percentage: number;
-    lastUpdated: Date;
-    model: string;
-    contextLimit: number;
-    firstMessage: string;
-    sessionCreated: Date | null;
-    wasCleared: boolean;
-}
+import { getClaudeProjectsDir } from './sessionFile';
+import { detectSessions, SessionInfo, DetectionOptions } from './sessionDetection';
 
 interface StatusBarEntry {
     item: vscode.StatusBarItem;
@@ -213,162 +193,19 @@ function getShortName(projectName: string, customNames: Record<string, string>):
 }
 
 async function findActiveSessions(): Promise<SessionInfo[]> {
-    const sessions: SessionInfo[] = [];
     const claudeDir = getClaudeProjectsDir();
-
-    if (!fs.existsSync(claudeDir)) {
-        return sessions;
-    }
-
     const config = vscode.workspace.getConfiguration('claudeContextBar');
-    const contextLimit = config.get<number>('contextLimit', 200000);
-    const modelContextLimits = config.get<Record<string, number>>('modelContextLimits', {});
-    const idleTimeout = config.get<number>('idleTimeout', 180);
 
-    // Only look at sessions modified within the idle timeout (active sessions)
-    const cutoffTime = Date.now() - (idleTimeout * 1000);
+    const options: DetectionOptions = {
+        idleTimeout: config.get<number>('idleTimeout', 180),
+        contextLimit: config.get<number>('contextLimit', 200000),
+        modelContextLimits: config.get<Record<string, number>>('modelContextLimits', {}),
+    };
 
-    try {
-        const projectDirs = fs.readdirSync(claudeDir);
-
-        for (const projectDir of projectDirs) {
-            const projectPath = path.join(claudeDir, projectDir);
-            const stat = fs.statSync(projectPath);
-
-            if (!stat.isDirectory()) continue;
-
-            // Skip Claude Memory and plugin directories (background agents, not interactive sessions)
-            if (projectDir.includes('claude-plugins') || projectDir.includes('claude-mem')) continue;
-
-            // Find JSONL files modified within cutoff time
-            const files = fs.readdirSync(projectPath)
-                .filter(f => f.endsWith('.jsonl'))
-                // Skip agent files (claude-mem background processes)
-                .filter(f => !f.startsWith('agent-'))
-                .map(f => ({
-                    name: f,
-                    path: path.join(projectPath, f),
-                    mtime: fs.statSync(path.join(projectPath, f)).mtime
-                }))
-                .filter(f => f.mtime.getTime() > cutoffTime)
-                .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-
-            if (files.length === 0) continue;
-
-            // Get token count from EACH active session file (1 per Claude Code tab)
-            for (const file of files) {
-                const usage = await getLatestTokenCount(file.path);
-
-                if (usage.totalTokens > 0) {
-                    const { name, fullPath } = decodeProjectPath(projectDir);
-                    // Extract short session ID from filename
-                    const sessionId = file.name.replace('.jsonl', '').substring(0, 8);
-                    // Auto-detect context limit based on model
-                    const sessionContextLimit = getContextLimitForModel(usage.model, contextLimit, modelContextLimits);
-                    sessions.push({
-                        projectName: name,
-                        projectPath: fullPath,
-                        sessionId,
-                        sessionFile: file.path,
-                        inputTokens: usage.inputTokens,
-                        cacheReadTokens: usage.cacheReadTokens,
-                        cacheCreationTokens: usage.cacheCreationTokens,
-                        totalTokens: usage.totalTokens,
-                        percentage: Math.round((usage.totalTokens / sessionContextLimit) * 100),
-                        lastUpdated: file.mtime,
-                        model: usage.model,
-                        contextLimit: sessionContextLimit,
-                        firstMessage: usage.firstMessage,
-                        sessionCreated: usage.sessionCreated,
-                        wasCleared: usage.wasCleared
-                    });
-                }
-            }
-        }
-    } catch (e) {
-        console.error('Error scanning Claude projects:', e);
-    }
-
-    // Group sessions by base project name
-    const projectGroups = new Map<string, SessionInfo[]>();
-    for (const session of sessions) {
-        const base = session.projectName;
-        if (!projectGroups.has(base)) {
-            projectGroups.set(base, []);
-        }
-        projectGroups.get(base)!.push(session);
-    }
-
-    // Process each project group: filter superseded sessions and apply stable numbering
-    const finalSessions: SessionInfo[] = [];
-    for (const [baseName, group] of projectGroups) {
-        // Sort by session CREATION time (newest first) to identify supersession
-        group.sort((a, b) => {
-            const aTime = a.sessionCreated?.getTime() || 0;
-            const bTime = b.sessionCreated?.getTime() || 0;
-            return bTime - aTime;  // Newest first
-        });
-
-        // Filter out superseded sessions
-        // A session is "superseded" if:
-        // 1. A newer session exists that was created AFTER this session's last update
-        //    (meaning the user started a new session after abandoning this one)
-        // 2. OR it has wasCleared=true (ended with /clear, no activity after)
-
-        const activeSessions: SessionInfo[] = [];
-
-        for (let i = 0; i < group.length; i++) {
-            const session = group[i];
-
-            // Check if cleared
-            if (session.wasCleared) {
-                continue; // Skip cleared sessions
-            }
-
-            // Check if superseded by a newer session
-            let isSuperseded = false;
-            for (let j = 0; j < i; j++) {
-                const newerSession = group[j];
-                const newerCreated = newerSession.sessionCreated?.getTime() || 0;
-                const thisLastUpdated = session.lastUpdated.getTime();
-
-                // If a newer session was CREATED after this session's LAST UPDATE,
-                // then this session was abandoned and shouldn't be shown
-                if (newerCreated > thisLastUpdated) {
-                    isSuperseded = true;
-                    break;
-                }
-            }
-
-            if (!isSuperseded) {
-                activeSessions.push(session);
-            }
-        }
-
-        // Re-sort by creation time for stable numbering (oldest first)
-        activeSessions.sort((a, b) => {
-            const aTime = a.sessionCreated?.getTime() || 0;
-            const bTime = b.sessionCreated?.getTime() || 0;
-            return aTime - bTime;
-        });
-
-        // Apply stable numbering
-        for (let i = 0; i < activeSessions.length; i++) {
-            if (i === 0) {
-                activeSessions[i].projectName = baseName;
-            } else {
-                activeSessions[i].projectName = `${baseName}-${i + 1}`;
-            }
-        }
-
-        finalSessions.push(...activeSessions);
-    }
-
-    // Sort by mtime for display order (most recent first)
-    finalSessions.sort((a, b) => b.lastUpdated.getTime() - a.lastUpdated.getTime());
+    const sessions = await detectSessions(claudeDir, options);
 
     // Filter out manually hidden sessions, but auto-unhide if there's new activity
-    const visibleSessions = finalSessions.filter(session => {
+    const visibleSessions = sessions.filter(session => {
         const hiddenAt = hiddenSessions.get(session.sessionFile);
         if (hiddenAt) {
             // Check if session was modified after it was hidden

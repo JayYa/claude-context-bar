@@ -161,11 +161,6 @@ export async function detectSessions(
 // EXPORTED FOR TESTING
 // ============================================================================
 
-/**
- * Apply grouping, ghost-session filtering, stable numbering, and time-based
- * sorting to a flat list of session snapshots. Exported so the filtering logic
- * can be unit-tested independently of the filesystem.
- */
 /** Normalise `sessionCreated` to epoch milliseconds (null → 0). */
 function creationTime(s: SessionInfo): number {
     return s.sessionCreated?.getTime() || 0;
