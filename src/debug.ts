@@ -1,30 +1,25 @@
 /**
  * Debug harness for Claude Context Bar extension
- * 
- * This script replicates the extension's session detection logic and outputs
- * detailed diagnostics to help debug ghost session issues.
- * 
+ *
+ * Uses the shared detectSessions module for session scanning and ghost-session
+ * filtering. This file is responsible only for formatted diagnostic output.
+ *
  * Run with: npm run compile && node out/debug.js
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
-import { TokenUsage, getLatestTokenCount, getClaudeProjectsDir } from './sessionFile';
+import { getClaudeProjectsDir } from './sessionFile';
+import { detectSessions, SessionInfo, DetectionOptions } from './sessionDetection';
 
 // ============================================================================
-// TYPES
+// CONFIGURATION
 // ============================================================================
 
-interface SessionInfo {
-    projectName: string;
-    projectPath: string;
-    sessionId: string;
-    sessionFile: string;
-    totalTokens: number;
-    lastUpdated: Date;
-    sessionCreated: Date | null;
-    wasCleared: boolean;
-}
+const DEBUG_OPTIONS: DetectionOptions = {
+    idleTimeout: 5 * 60, // 5 minutes — match legacy debug.ts cutoff
+    contextLimit: 200_000,
+    modelContextLimits: {},
+};
 
 // ============================================================================
 // DEBUG RUNNER
@@ -41,119 +36,39 @@ async function debugSessions(projectFilter?: string) {
         return;
     }
 
-    const cutoffTime = Date.now() - (5 * 60 * 1000);
-    const projectDirs = fs.readdirSync(claudeDir);
+    const sessions = await detectSessions(claudeDir, DEBUG_OPTIONS);
+    const filtered = projectFilter
+        ? sessions.filter(s => s.projectName.includes(projectFilter) || s.projectPath.includes(projectFilter))
+        : sessions;
 
-    // Collect all sessions
-    const allSessions: SessionInfo[] = [];
-
-    for (const projectDir of projectDirs) {
-        if (projectFilter && !projectDir.includes(projectFilter)) continue;
-        if (projectDir.includes('claude-plugins') || projectDir.includes('claude-mem')) continue;
-
-        const projectPath = path.join(claudeDir, projectDir);
-        try {
-            if (!fs.statSync(projectPath).isDirectory()) continue;
-        } catch (e) { continue; }
-
-        const files = fs.readdirSync(projectPath)
-            .filter(f => f.endsWith('.jsonl') && !f.startsWith('agent-'))
-            .map(f => ({
-                name: f,
-                path: path.join(projectPath, f),
-                mtime: fs.statSync(path.join(projectPath, f)).mtime
-            }))
-            .filter(f => f.mtime.getTime() > cutoffTime)
-            .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-
-        if (files.length === 0) continue;
-
-        console.log(`\n--- Project: ${projectDir} ---`);
-        console.log(`Found ${files.length} active session files\n`);
-
-        for (const file of files) {
-            const usage = await getLatestTokenCount(file.path);
-
-            console.log(`  📄 ${file.name.substring(0, 8)}...`);
-            console.log(`     Created: ${usage.sessionCreated?.toISOString() || 'unknown'}`);
-            console.log(`     LastUpd: ${file.mtime.toISOString()}`);
-            console.log(`     Tokens:  ${usage.totalTokens}`);
-            console.log(`     Cleared: ${usage.wasCleared}`);
-            console.log(`     FirstMsg: "${usage.firstMessage}"`);
-            console.log('');
-
-            if (usage.totalTokens > 0) {
-                allSessions.push({
-                    projectName: projectDir,
-                    projectPath: projectPath,
-                    sessionId: file.name.replace('.jsonl', '').substring(0, 8),
-                    sessionFile: file.path,
-                    totalTokens: usage.totalTokens,
-                    lastUpdated: file.mtime,
-                    sessionCreated: usage.sessionCreated,
-                    wasCleared: usage.wasCleared
-                });
-            }
-        }
-    }
-
-    // Group by project and apply supersession logic
-    console.log(`\n========== SUPERSESSION ANALYSIS ==========\n`);
-
+    // Group by project path (stable — not mutated by processSessionGroups)
     const projectGroups = new Map<string, SessionInfo[]>();
-    for (const session of allSessions) {
-        const base = session.projectName;
-        if (!projectGroups.has(base)) {
-            projectGroups.set(base, []);
+    for (const session of filtered) {
+        const key = session.projectPath;
+        if (!projectGroups.has(key)) {
+            projectGroups.set(key, []);
         }
-        projectGroups.get(base)!.push(session);
+        projectGroups.get(key)!.push(session);
     }
 
-    for (const [baseName, group] of projectGroups) {
-        console.log(`Project: ${baseName}`);
+    for (const [projectPath, group] of projectGroups) {
+        console.log(`\n--- Project: ${projectPath} ---`);
+        console.log(`Sessions: ${group.length}\n`);
 
-        // Sort by creation time (newest first)
-        group.sort((a, b) => {
-            const aTime = a.sessionCreated?.getTime() || 0;
-            const bTime = b.sessionCreated?.getTime() || 0;
-            return bTime - aTime;
-        });
-
-        for (let i = 0; i < group.length; i++) {
-            const session = group[i];
-            let status = "✅ SHOW";
-            let reason = "";
-
-            if (session.wasCleared) {
-                status = "❌ HIDE";
-                reason = "wasCleared=true (ended with /clear)";
-            } else {
-                for (let j = 0; j < i; j++) {
-                    const newerSession = group[j];
-                    const newerCreated = newerSession.sessionCreated?.getTime() || 0;
-                    const thisLastUpdated = session.lastUpdated.getTime();
-
-                    if (newerCreated > thisLastUpdated) {
-                        status = "❌ HIDE";
-                        reason = `superseded by ${newerSession.sessionId} (newer created after this one's last update)`;
-                        break;
-                    }
-                }
-            }
-
-            console.log(`  [${status}] ${session.sessionId}`);
-            if (reason) console.log(`      Reason: ${reason}`);
-            console.log(`      Created: ${session.sessionCreated?.toISOString()}`);
-            console.log(`      LastUpd: ${session.lastUpdated.toISOString()}`);
+        for (const session of group) {
+            console.log(`  📄 ${session.sessionId}...`);
+            console.log(`     Created:  ${session.sessionCreated?.toISOString() || 'unknown'}`);
+            console.log(`     LastUpd:  ${session.lastUpdated.toISOString()}`);
+            console.log(`     Model:    ${session.model}`);
+            console.log(`     Tokens:   ${session.totalTokens} / ${session.contextLimit} (${session.percentage}%)`);
+            console.log(`     Cleared:  ${session.wasCleared}`);
+            console.log(`     FirstMsg: "${session.firstMessage}"`);
+            console.log('');
         }
-        console.log('');
     }
 
-    // Summary
-    const totalShown = allSessions.filter(s => !s.wasCleared).length;
     console.log(`========== SUMMARY ==========`);
-    console.log(`Total sessions found: ${allSessions.length}`);
-    console.log(`Would be shown (before supersession): ${totalShown}`);
+    console.log(`Active sessions (ghost-filtered by detectSessions): ${filtered.length}`);
 }
 
 // Run with optional project filter
