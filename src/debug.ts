@@ -9,22 +9,11 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { TokenUsage, getLatestTokenCount, getClaudeProjectsDir } from './sessionFile';
 
 // ============================================================================
-// TYPES (copied from extension.ts)
+// TYPES
 // ============================================================================
-
-interface TokenUsage {
-    inputTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-    totalTokens: number;
-    model: string;
-    firstMessage: string;
-    sessionCreated: Date | null;
-    wasCleared: boolean;
-}
 
 interface SessionInfo {
     projectName: string;
@@ -35,106 +24,6 @@ interface SessionInfo {
     lastUpdated: Date;
     sessionCreated: Date | null;
     wasCleared: boolean;
-}
-
-// ============================================================================
-// LOGIC (copied from extension.ts - keep in sync!)
-// ============================================================================
-
-function getClaudeProjectsDir(): string {
-    return path.join(os.homedir(), '.claude', 'projects');
-}
-
-async function getLatestTokenCount(jsonlPath: string): Promise<TokenUsage> {
-    return new Promise((resolve) => {
-        try {
-            const stats = fs.statSync(jsonlPath);
-            if (stats.size === 0) {
-                resolve({ inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0, model: '', firstMessage: '', sessionCreated: null, wasCleared: false });
-                return;
-            }
-
-            const content = fs.readFileSync(jsonlPath, 'utf-8');
-            const lines = content.trim().split('\n');
-
-            let lastClearIndex = -1;
-            let userMessagesAfterClear = 0;
-
-            for (let i = lines.length - 1; i >= 0; i--) {
-                const line = lines[i];
-                if (!line.trim()) continue;
-                try {
-                    const entry = JSON.parse(line);
-                    if (entry.type === 'user' && entry.message?.content) {
-                        const msgContent = entry.message.content;
-                        if (typeof msgContent === 'string' && msgContent.includes('<command-name>/clear</command-name>')) {
-                            lastClearIndex = i;
-                            break;
-                        }
-                        userMessagesAfterClear++;
-                    }
-                } catch (e) {
-                    continue;
-                }
-            }
-
-            const wasCleared = (lastClearIndex !== -1 && userMessagesAfterClear === 0);
-            const startIndex = lastClearIndex >= 0 ? lastClearIndex + 1 : 0;
-
-            let firstMessage = '';
-            let sessionCreated: Date | null = null;
-            let model = '';
-            let finalUsage = { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0 };
-
-            for (let i = startIndex; i < lines.length; i++) {
-                const line = lines[i];
-                if (!line.trim()) continue;
-                try {
-                    const entry = JSON.parse(line);
-                    if (!sessionCreated && entry.timestamp) {
-                        sessionCreated = new Date(entry.timestamp);
-                    }
-                    if (!firstMessage && entry.type === 'user' && entry.message?.content) {
-                        const msgContent = entry.message.content;
-                        if (typeof msgContent === 'string' &&
-                            !msgContent.includes('<command-name>') &&
-                            !msgContent.includes('<local-command-') &&
-                            !msgContent.includes('Caveat:')) {
-                            firstMessage = msgContent.substring(0, 60);
-                        }
-                    }
-                    if (entry.message?.model) {
-                        model = entry.message.model;
-                    }
-                    if (entry.message?.usage || entry.usage) {
-                        const u = entry.message?.usage || entry.usage;
-                        finalUsage = {
-                            inputTokens: u.input_tokens || 0,
-                            cacheReadTokens: u.cache_read_input_tokens || 0,
-                            cacheCreationTokens: u.cache_creation_input_tokens || 0,
-                            totalTokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)
-                        };
-                    }
-                } catch (e) {
-                    continue;
-                }
-            }
-
-            resolve({
-                inputTokens: finalUsage.inputTokens,
-                cacheReadTokens: finalUsage.cacheReadTokens,
-                cacheCreationTokens: finalUsage.cacheCreationTokens,
-                totalTokens: finalUsage.totalTokens,
-                model,
-                firstMessage: firstMessage ? firstMessage + '...' : '',
-                sessionCreated,
-                wasCleared
-            });
-
-        } catch (e) {
-            resolve({ inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0, model: '', firstMessage: '', sessionCreated: null, wasCleared: false });
-        }
-    });
 }
 
 // ============================================================================
