@@ -29,9 +29,14 @@ tsconfig.json
 
 # Internal documentation (README.md and CHANGELOG.md are for the marketplace)
 CLAUDE.md
+CONTEXT.md
+docs/
 DEV-README.md
 INTERNAL-DEV-NOTES.md
 whats-next.md
+
+# Lock file not needed in published extension
+package-lock.json
 
 # Generated knowledge graph
 graphify-out/
