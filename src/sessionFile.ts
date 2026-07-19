@@ -77,7 +77,7 @@ function isCommandMessage(msg: unknown): boolean {
         msg.includes('Caveat:');
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function findLastClearIndex(lines: string[]): number {
     for (let i = lines.length - 1; i >= 0; i--) {
         if (!lines[i].trim()) continue;
@@ -94,7 +94,7 @@ function findLastClearIndex(lines: string[]): number {
     return -1;
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function countUserMessagesAfter(lines: string[], index: number): number {
     let count = 0;
     for (let i = index + 1; i < lines.length; i++) {
@@ -111,7 +111,7 @@ function countUserMessagesAfter(lines: string[], index: number): number {
     return count;
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function extractUsage(lines: string[], fromIndex: number): {
     inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number;
 } {
@@ -133,7 +133,7 @@ function extractUsage(lines: string[], fromIndex: number): {
     return usage;
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function extractModel(lines: string[], fromIndex: number): string {
     let model = '';
     for (let i = fromIndex; i < lines.length; i++) {
@@ -148,7 +148,7 @@ function extractModel(lines: string[], fromIndex: number): string {
     return model;
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function findFirstUserMessage(lines: string[], fromIndex: number): string {
     for (let i = fromIndex; i < lines.length; i++) {
         if (!lines[i].trim()) continue;
@@ -166,7 +166,7 @@ function findFirstUserMessage(lines: string[], fromIndex: number): string {
     return '';
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function extractFirstTimestamp(lines: string[], fromIndex: number): Date | null {
     for (let i = fromIndex; i < lines.length; i++) {
         if (!lines[i].trim()) continue;

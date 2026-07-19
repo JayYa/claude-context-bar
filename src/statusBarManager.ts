@@ -143,7 +143,7 @@ const EMOJI_MAP: [string[], string][] = [
     [['art', 'design', 'draw', 'paint', 'sketch', 'creative', 'graphic'], '🎨'],
 ];
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function getEmojiForProject(projectName: string): string {
     const name = projectName.toLowerCase();
 
@@ -158,7 +158,7 @@ function getEmojiForProject(projectName: string): string {
     return '🧠';
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. Extracts the last syllable for project name abbreviation. */
 function extractLastSyllable(word: string): string {
     const match = word.match(/[bcdfghjklmnpqrstvwxz]+[aeiou]+[bcdfghjklmnpqrstvwxz]*$/i);
     if (match) {
@@ -167,7 +167,7 @@ function extractLastSyllable(word: string): string {
     return word.slice(-Math.min(4, word.length));
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function getShortName(projectName: string, customNames: Record<string, string>): string {
     // Check custom override first (check both full name and base name)
     if (customNames[projectName]) {
@@ -205,7 +205,7 @@ function getShortName(projectName: string, customNames: Record<string, string>):
     return shortBase + sessionSuffix;
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. Formats token count with K/M suffix for display. */
 function formatTokens(tokens: number): string {
     if (tokens >= 1_000_000) {
         return (tokens / 1_000_000).toFixed(1) + 'M';
@@ -215,7 +215,7 @@ function formatTokens(tokens: number): string {
     return tokens.toString();
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function buildSessionText(
     session: SessionInfo,
     config: StatusBarConfig,
@@ -229,7 +229,7 @@ function buildSessionText(
     return `${icon}${iconSpace}${displayName}: ${session.percentage}%`;
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. Picks a VS Code workbench color ID based on usage percentage. */
 function getBackgroundColorId(
     percentage: number,
     warningThreshold: number,
@@ -243,7 +243,7 @@ function getBackgroundColorId(
     return undefined;
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function buildTooltip(session: SessionInfo): string {
     const firstMsgLine = session.firstMessage ? `💬 *"${session.firstMessage}"*\n\n` : '';
 
@@ -262,7 +262,7 @@ function buildTooltip(session: SessionInfo): string {
     );
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function assignProjectColors(
     sessions: SessionInfo[],
     config: StatusBarConfig,
@@ -296,7 +296,7 @@ function assignProjectColors(
     return projectColorMap;
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function filterHiddenSessions(
     sessions: SessionInfo[],
     hiddenSessions: Map<string, number>,

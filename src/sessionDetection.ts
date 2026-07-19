@@ -161,12 +161,12 @@ export async function detectSessions(
 // INTERNAL (exported via _test for testing)
 // ============================================================================
 
-// Exported via _test for testing
+/** Exported via _test for testing. */
 function creationTime(s: SessionInfo): number {
     return s.sessionCreated?.getTime() || 0;
 }
 
-// Exported via _test for testing
+/** Exported via _test for testing. Groups sessions by base project name and keeps only the latest per group. */
 function processSessionGroups(sessions: SessionInfo[]): SessionInfo[] {
     if (sessions.length === 0) return [];
 

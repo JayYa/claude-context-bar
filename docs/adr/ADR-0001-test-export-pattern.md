@@ -20,11 +20,12 @@
 
 ```typescript
 // 模块私有函数 —— 不对外导出
-function findLastClearIndex(lines: string[]): number { /* ... */ }
+/** Exported via _test for testing. Extracts the last syllable for project name abbreviation. */
+function extractLastSyllable(word: string): string { /* ... */ }
 
 // 测试导出 —— 仅供测试访问
 export const _test = {
-    findLastClearIndex,
+    extractLastSyllable,
     // ...
 };
 ```
@@ -42,7 +43,7 @@ const { findLastClearIndex } = _test;
 |------|------|
 | `_test` 中只放纯函数 | 不接受依赖注入、不产生副作用——只暴露 compute/logic 函数 |
 | 公开接口函数不入 `_test` | 如果函数已被其他模块 import，则保持公开导出 |
-| 函数前加简短注释 | `// Exported via _test for testing` |
+| 函数前加 JSDoc 注释 | `/** Exported via _test for testing. [功能描述] */`；功能描述仅在函数名不够自解释时添加 |
 | 测试中解构后使用 | `const { fn } = _test;` ——与直接 import 有相同的可读性 |
 
 ## 后果
