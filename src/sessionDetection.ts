@@ -158,20 +158,16 @@ export async function detectSessions(
 }
 
 // ============================================================================
-// EXPORTED FOR TESTING
+// INTERNAL (exported via _test for testing)
 // ============================================================================
 
-/** Normalise `sessionCreated` to epoch milliseconds (null → 0). */
+/** Exported via _test for testing. */
 function creationTime(s: SessionInfo): number {
     return s.sessionCreated?.getTime() || 0;
 }
 
-/**
- * Apply grouping, ghost-session filtering, stable numbering, and time-based
- * sorting to a flat list of session snapshots. Exported so the filtering logic
- * can be unit-tested independently of the filesystem.
- */
-export function processSessionGroups(sessions: SessionInfo[]): SessionInfo[] {
+/** Exported via _test for testing. Groups sessions by base project name and keeps only the latest per group. */
+function processSessionGroups(sessions: SessionInfo[]): SessionInfo[] {
     if (sessions.length === 0) return [];
 
     // Group sessions by base project name (decoded name)
@@ -234,3 +230,8 @@ export function processSessionGroups(sessions: SessionInfo[]): SessionInfo[] {
 
     return finalSessions;
 }
+
+export const _test = {
+    creationTime,
+    processSessionGroups,
+};

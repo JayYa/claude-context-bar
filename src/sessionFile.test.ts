@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { decodeProjectPath, getLatestTokenCount } from './sessionFile';
+import { decodeProjectPath, getLatestTokenCount, _test } from './sessionFile';
 
 function makeTempJsonl(content: string): string {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccb-test-'));
@@ -59,6 +59,272 @@ describe('decodeProjectPath', () => {
             assert.equal(result.fullPath, '/Users/name/project');
             assert.equal(result.name, 'project');
         });
+    });
+});
+
+describe('findLastClearIndex', () => {
+    const { findLastClearIndex } = _test;
+
+    it('returns the index of a line containing /clear command', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'hello' } }),
+            JSON.stringify({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }),
+        ];
+        assert.equal(findLastClearIndex(lines), 1);
+    });
+
+    it('returns -1 when no /clear command is present', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'hello' } }),
+            JSON.stringify({ type: 'user', message: { content: 'world' } }),
+        ];
+        assert.equal(findLastClearIndex(lines), -1);
+    });
+
+    it('returns the last /clear index when multiple clears exist', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }),
+            JSON.stringify({ type: 'user', message: { content: 'mid' } }),
+            JSON.stringify({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }),
+        ];
+        assert.equal(findLastClearIndex(lines), 2);
+    });
+
+    it('ignores /clear text in non-user messages', () => {
+        const lines = [
+            JSON.stringify({ type: 'assistant', message: { content: '<command-name>/clear</command-name>' } }),
+            JSON.stringify({ type: 'user', message: { content: 'hello' } }),
+        ];
+        assert.equal(findLastClearIndex(lines), -1);
+    });
+
+    it('skips malformed JSON lines without crashing', () => {
+        const lines = [
+            'not valid json',
+            JSON.stringify({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }),
+        ];
+        assert.equal(findLastClearIndex(lines), 1);
+    });
+});
+
+describe('countUserMessagesAfter', () => {
+    const { countUserMessagesAfter } = _test;
+
+    it('returns 0 when no user messages exist after the given index', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'hello' } }),
+            JSON.stringify({ type: 'assistant', message: { content: 'response' } }),
+        ];
+        assert.equal(countUserMessagesAfter(lines, 0), 0);
+    });
+
+    it('counts multiple user messages after the given index', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'a' } }),
+            JSON.stringify({ type: 'user', message: { content: 'b' } }),
+            JSON.stringify({ type: 'user', message: { content: 'c' } }),
+        ];
+        assert.equal(countUserMessagesAfter(lines, 0), 2);
+    });
+
+    it('skips command messages like <command-name>, <local-command->, and Caveat:', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: '<command-name>/help</command-name>' } }),
+            JSON.stringify({ type: 'user', message: { content: '<local-command-echo>test</local-command-echo>' } }),
+            JSON.stringify({ type: 'user', message: { content: 'Caveat: something' } }),
+            JSON.stringify({ type: 'user', message: { content: 'real message' } }),
+        ];
+        assert.equal(countUserMessagesAfter(lines, -1), 1);
+    });
+
+    it('counts array-format user messages', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: [{ text: 'hello array' }] } }),
+            JSON.stringify({ type: 'user', message: { content: 'plain text' } }),
+        ];
+        assert.equal(countUserMessagesAfter(lines, -1), 2);
+    });
+
+    it('returns 0 when index is the last line', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'first' } }),
+            JSON.stringify({ type: 'user', message: { content: 'last' } }),
+        ];
+        assert.equal(countUserMessagesAfter(lines, 1), 0);
+    });
+});
+
+describe('extractUsage', () => {
+    const { extractUsage } = _test;
+
+    it('extracts usage from entry.message.usage', () => {
+        const lines = [
+            JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 100, cache_read_input_tokens: 50, cache_creation_input_tokens: 25 } } }),
+        ];
+        const result = extractUsage(lines, 0);
+        assert.equal(result.inputTokens, 100);
+        assert.equal(result.cacheReadTokens, 50);
+        assert.equal(result.cacheCreationTokens, 25);
+    });
+
+    it('extracts usage from top-level entry.usage', () => {
+        const lines = [
+            JSON.stringify({ type: 'result', usage: { input_tokens: 200, cache_read_input_tokens: 75, cache_creation_input_tokens: 30 } }),
+        ];
+        const result = extractUsage(lines, 0);
+        assert.equal(result.inputTokens, 200);
+        assert.equal(result.cacheReadTokens, 75);
+        assert.equal(result.cacheCreationTokens, 30);
+    });
+
+    it('returns zeros when no usage is found', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'hello' } }),
+        ];
+        const result = extractUsage(lines, 0);
+        assert.equal(result.inputTokens, 0);
+        assert.equal(result.cacheReadTokens, 0);
+        assert.equal(result.cacheCreationTokens, 0);
+    });
+
+    it('returns the last usage when multiple entries exist', () => {
+        const lines = [
+            JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 100 } } }),
+            JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 500 } } }),
+        ];
+        const result = extractUsage(lines, 0);
+        assert.equal(result.inputTokens, 500);
+    });
+
+    it('starts scanning from the given fromIndex', () => {
+        const lines = [
+            JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 100 } } }),
+            JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 500 } } }),
+        ];
+        const result = extractUsage(lines, 1);
+        assert.equal(result.inputTokens, 500);
+    });
+});
+
+describe('extractModel', () => {
+    const { extractModel } = _test;
+
+    it('extracts model from entry.message.model', () => {
+        const lines = [
+            JSON.stringify({ type: 'assistant', message: { model: 'claude-sonnet-4-5' } }),
+        ];
+        assert.equal(extractModel(lines, 0), 'claude-sonnet-4-5');
+    });
+
+    it('returns empty string when no model is found', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'hello' } }),
+        ];
+        assert.equal(extractModel(lines, 0), '');
+    });
+
+    it('returns the last model when multiple entries exist', () => {
+        const lines = [
+            JSON.stringify({ type: 'assistant', message: { model: 'claude-haiku-4-5' } }),
+            JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-4-8' } }),
+        ];
+        assert.equal(extractModel(lines, 0), 'claude-opus-4-8');
+    });
+
+    it('starts scanning from the given fromIndex', () => {
+        const lines = [
+            JSON.stringify({ type: 'assistant', message: { model: 'first' } }),
+            JSON.stringify({ type: 'assistant', message: { model: 'second' } }),
+        ];
+        assert.equal(extractModel(lines, 1), 'second');
+    });
+});
+
+describe('findFirstUserMessage', () => {
+    const { findFirstUserMessage } = _test;
+
+    it('returns the first non-command user message content (first 60 chars)', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'hello world' } }),
+        ];
+        assert.equal(findFirstUserMessage(lines, 0), 'hello world');
+    });
+
+    it('skips messages containing <command-name>', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: '<command-name>/help</command-name>' } }),
+            JSON.stringify({ type: 'user', message: { content: 'real message' } }),
+        ];
+        assert.equal(findFirstUserMessage(lines, 0), 'real message');
+    });
+
+    it('skips messages containing <local-command-', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: '<local-command-echo>test</local-command-echo>' } }),
+            JSON.stringify({ type: 'user', message: { content: 'actual content' } }),
+        ];
+        assert.equal(findFirstUserMessage(lines, 0), 'actual content');
+    });
+
+    it('skips messages containing Caveat:', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'Caveat: some warning' } }),
+            JSON.stringify({ type: 'user', message: { content: 'my question' } }),
+        ];
+        assert.equal(findFirstUserMessage(lines, 0), 'my question');
+    });
+
+    it('extracts text from array-format content', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: [{ text: 'array message' }] } }),
+        ];
+        assert.equal(findFirstUserMessage(lines, 0), 'array message');
+    });
+
+    it('returns empty string when no valid user message is found', () => {
+        const lines = [
+            JSON.stringify({ type: 'assistant', message: { content: 'response' } }),
+        ];
+        assert.equal(findFirstUserMessage(lines, 0), '');
+    });
+
+    it('truncates long messages to 60 characters', () => {
+        const longText = 'a'.repeat(100);
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: longText } }),
+        ];
+        const result = findFirstUserMessage(lines, 0);
+        assert.equal(result.length, 60);
+        assert.ok(longText.startsWith(result));
+    });
+});
+
+describe('extractFirstTimestamp', () => {
+    const { extractFirstTimestamp } = _test;
+
+    it('returns a Date for the first valid timestamp', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'hello' }, timestamp: '2025-06-15T10:30:00.000Z' }),
+        ];
+        const result = extractFirstTimestamp(lines, 0);
+        assert.ok(result instanceof Date);
+        assert.equal(result?.toISOString(), '2025-06-15T10:30:00.000Z');
+    });
+
+    it('returns null when no timestamp exists', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'hello' } }),
+        ];
+        assert.equal(extractFirstTimestamp(lines, 0), null);
+    });
+
+    it('returns the first timestamp when multiple entries have timestamps', () => {
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'first' }, timestamp: '2025-01-01T00:00:00.000Z' }),
+            JSON.stringify({ type: 'user', message: { content: 'second' }, timestamp: '2025-06-15T12:00:00.000Z' }),
+        ];
+        const result = extractFirstTimestamp(lines, 0);
+        assert.equal(result?.toISOString(), '2025-01-01T00:00:00.000Z');
     });
 });
 

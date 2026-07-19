@@ -70,6 +70,125 @@ const EMPTY_TOKEN_USAGE: TokenUsage = {
     wasCleared: false,
 };
 
+function isCommandMessage(msg: unknown): boolean {
+    if (typeof msg !== 'string') return false;
+    return msg.includes('<command-name>') ||
+        msg.includes('<local-command-') ||
+        msg.includes('Caveat:');
+}
+
+/** Exported via _test for testing. */
+function findLastClearIndex(lines: string[]): number {
+    for (let i = lines.length - 1; i >= 0; i--) {
+        if (!lines[i].trim()) continue;
+        try {
+            const entry = JSON.parse(lines[i]);
+            if (entry.type === 'user' && entry.message?.content) {
+                const msg = entry.message.content;
+                if (typeof msg === 'string' && msg.includes('<command-name>/clear</command-name>')) {
+                    return i;
+                }
+            }
+        } catch (e) { continue; }
+    }
+    return -1;
+}
+
+/** Exported via _test for testing. */
+function countUserMessagesAfter(lines: string[], index: number): number {
+    let count = 0;
+    for (let i = index + 1; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        try {
+            const entry = JSON.parse(lines[i]);
+            if (entry.type === 'user' && entry.message?.content) {
+                if (!isCommandMessage(entry.message.content)) {
+                    count++;
+                }
+            }
+        } catch (e) { continue; }
+    }
+    return count;
+}
+
+/** Exported via _test for testing. */
+function extractUsage(lines: string[], fromIndex: number): {
+    inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number;
+} {
+    let usage = { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    for (let i = fromIndex; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        try {
+            const entry = JSON.parse(lines[i]);
+            const u = entry.message?.usage || entry.usage;
+            if (u) {
+                usage = {
+                    inputTokens: u.input_tokens || 0,
+                    cacheReadTokens: u.cache_read_input_tokens || 0,
+                    cacheCreationTokens: u.cache_creation_input_tokens || 0,
+                };
+            }
+        } catch (e) { continue; }
+    }
+    return usage;
+}
+
+/** Exported via _test for testing. */
+function extractModel(lines: string[], fromIndex: number): string {
+    let model = '';
+    for (let i = fromIndex; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        try {
+            const entry = JSON.parse(lines[i]);
+            if (entry.message?.model) {
+                model = entry.message.model;
+            }
+        } catch (e) { continue; }
+    }
+    return model;
+}
+
+/** Exported via _test for testing. */
+function findFirstUserMessage(lines: string[], fromIndex: number): string {
+    for (let i = fromIndex; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        try {
+            const entry = JSON.parse(lines[i]);
+            if (entry.type !== 'user' || !entry.message?.content) continue;
+            const msg = entry.message.content;
+            if (typeof msg === 'string' && !isCommandMessage(msg)) {
+                return msg.substring(0, 60);
+            } else if (Array.isArray(msg) && msg[0]?.text) {
+                return msg[0].text.substring(0, 60);
+            }
+        } catch (e) { continue; }
+    }
+    return '';
+}
+
+/** Exported via _test for testing. */
+function extractFirstTimestamp(lines: string[], fromIndex: number): Date | null {
+    for (let i = fromIndex; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        try {
+            const entry = JSON.parse(lines[i]);
+            if (entry.timestamp) {
+                return new Date(entry.timestamp);
+            }
+        } catch (e) { continue; }
+    }
+    return null;
+}
+
+export const _test = {
+    findLastClearIndex,
+    countUserMessagesAfter,
+    extractUsage,
+    extractModel,
+    findFirstUserMessage,
+    extractFirstTimestamp,
+};
+
 export async function getLatestTokenCount(
     jsonlPath: string,
     readFile?: (path: string) => string
@@ -84,107 +203,30 @@ export async function getLatestTokenCount(
                 return;
             }
 
-            // Read the file
             const content = read(jsonlPath);
             const lines = content.trim().split('\n');
 
-            // Scan backwards to find the last /clear command AND check for user activity after it
-            let lastClearIndex = -1;
-            let userMessagesAfterClear = 0;
+            const lastClearIndex = findLastClearIndex(lines);
+            const messagesAfterClear = countUserMessagesAfter(lines, lastClearIndex);
+            const wasCleared = (lastClearIndex !== -1 && messagesAfterClear === 0);
 
-            for (let i = lines.length - 1; i >= 0; i--) {
-                const line = lines[i];
-                if (!line.trim()) continue;
-                try {
-                    const entry = JSON.parse(line);
-
-                    // Check for User message
-                    if (entry.type === 'user' && entry.message?.content) {
-                        const msgContent = entry.message.content;
-
-                        // Check for /clear command
-                        if (typeof msgContent === 'string' && msgContent.includes('<command-name>/clear</command-name>')) {
-                            lastClearIndex = i;
-                            break; // Found the latest clear, stop scanning
-                        }
-
-                        // If not clear, it's a user message after the clear point (since we're going backwards)
-                        userMessagesAfterClear++;
-                    }
-                } catch (e) {
-                    continue;
-                }
-            }
-
-            // Determine if session is effectively cleared
-            // It is cleared IF:
-            // 1. We found a /clear command
-            // 2. AND there are NO user messages after it (meaning the user hasn't continued the session yet)
-            const wasCleared = (lastClearIndex !== -1 && userMessagesAfterClear === 0);
-
-            // Calculate usage and finding first message starting from AFTER the clear
             const startIndex = lastClearIndex >= 0 ? lastClearIndex + 1 : 0;
 
-            let firstMessage = '';
-            let sessionCreated: Date | null = null;
-            let model = '';
-            let finalUsage = { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0 };
-
-            // Forward pass from start index to find metadata and latest usage
-            for (let i = startIndex; i < lines.length; i++) {
-                const line = lines[i];
-                if (!line.trim()) continue;
-                try {
-                    const entry = JSON.parse(line);
-
-                    // Get session creation timestamp (first valid timestamp after clear)
-                    if (!sessionCreated && entry.timestamp) {
-                        sessionCreated = new Date(entry.timestamp);
-                    }
-
-                    // Look for first user message (for display)
-                    if (!firstMessage && entry.type === 'user' && entry.message?.content) {
-                        const msgContent = entry.message.content;
-                        // Skip command-related messages
-                        if (typeof msgContent === 'string' &&
-                            !msgContent.includes('<command-name>') &&
-                            !msgContent.includes('<local-command-') &&
-                            !msgContent.includes('Caveat:')) {
-                            firstMessage = msgContent.substring(0, 60);
-                        } else if (Array.isArray(msgContent) && msgContent[0]?.text) {
-                            firstMessage = msgContent[0].text.substring(0, 60);
-                        }
-                    }
-
-                    // Update latest usage/model as we go (capturing the last valid usage report)
-                    if (entry.message?.model) {
-                        model = entry.message.model;
-                    }
-                    if (entry.message?.usage || entry.usage) {
-                        const u = entry.message?.usage || entry.usage;
-                        finalUsage = {
-                            inputTokens: u.input_tokens || 0,
-                            cacheReadTokens: u.cache_read_input_tokens || 0,
-                            cacheCreationTokens: u.cache_creation_input_tokens || 0,
-                            totalTokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)
-                        };
-                    }
-                } catch (e) {
-                    continue;
-                }
-            }
+            const usage = extractUsage(lines, startIndex);
+            const model = extractModel(lines, startIndex);
+            const firstMsg = findFirstUserMessage(lines, startIndex);
+            const created = extractFirstTimestamp(lines, startIndex);
 
             resolve({
-                inputTokens: finalUsage.inputTokens,
-                cacheReadTokens: finalUsage.cacheReadTokens,
-                cacheCreationTokens: finalUsage.cacheCreationTokens,
-                totalTokens: finalUsage.totalTokens,
+                inputTokens: usage.inputTokens,
+                cacheReadTokens: usage.cacheReadTokens,
+                cacheCreationTokens: usage.cacheCreationTokens,
+                totalTokens: usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens,
                 model,
-                firstMessage: firstMessage ? firstMessage + '...' : '',
-                sessionCreated,
-                wasCleared
+                firstMessage: firstMsg ? firstMsg + '...' : '',
+                sessionCreated: created,
+                wasCleared,
             });
-
         } catch (e) {
             resolve({ ...EMPTY_TOKEN_USAGE });
         }
