@@ -5,10 +5,11 @@ import * as path from 'path';
 import * as os from 'os';
 import {
     detectSessions,
-    processSessionGroups,
+    _test,
     SessionInfo,
     DetectionOptions,
 } from './sessionDetection';
+const { processSessionGroups } = _test;
 
 // ============================================================================
 // TEST HELPERS

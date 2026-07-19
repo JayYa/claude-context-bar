@@ -118,7 +118,7 @@ function getRealVSCodeSurface(): VSCodeSurface {
 }
 
 // ============================================================================
-// PURE RENDERING FUNCTIONS (exported for unit testing)
+// INTERNAL (exported via _test for testing)
 // ============================================================================
 
 /** Emoji mappings: [keywords[], emoji][] */
@@ -143,11 +143,8 @@ const EMOJI_MAP: [string[], string][] = [
     [['art', 'design', 'draw', 'paint', 'sketch', 'creative', 'graphic'], '🎨'],
 ];
 
-/**
- * Match an emoji to a project name using fuzzy keyword matching.
- * Falls back to 🧠 for unrecognized projects.
- */
-export function getEmojiForProject(projectName: string): string {
+// Exported via _test for testing
+function getEmojiForProject(projectName: string): string {
     const name = projectName.toLowerCase();
 
     for (const [keywords, emoji] of EMOJI_MAP) {
@@ -161,11 +158,8 @@ export function getEmojiForProject(projectName: string): string {
     return '🧠';
 }
 
-/**
- * Extract the last syllable from a word for compact naming.
- * "typescript" → "script", "webpack" → "pack", "frontend" → "tend"
- */
-export function extractLastSyllable(word: string): string {
+// Exported via _test for testing
+function extractLastSyllable(word: string): string {
     const match = word.match(/[bcdfghjklmnpqrstvwxz]+[aeiou]+[bcdfghjklmnpqrstvwxz]*$/i);
     if (match) {
         return match[0];
@@ -173,16 +167,8 @@ export function extractLastSyllable(word: string): string {
     return word.slice(-Math.min(4, word.length));
 }
 
-/**
- * Generate a short name for a project.
- *
- * Multi-word: "my-cool-project" → "MCP" (acronym)
- * Single-word: "typescript" → "Tscript" (first letter + last syllable)
- * Short names (≤5 chars) are kept as-is.
- * Session number suffixes (-2, -3) are preserved.
- * Custom names from config take highest priority.
- */
-export function getShortName(projectName: string, customNames: Record<string, string>): string {
+// Exported via _test for testing
+function getShortName(projectName: string, customNames: Record<string, string>): string {
     // Check custom override first (check both full name and base name)
     if (customNames[projectName]) {
         return customNames[projectName];
@@ -219,11 +205,8 @@ export function getShortName(projectName: string, customNames: Record<string, st
     return shortBase + sessionSuffix;
 }
 
-/**
- * Format token counts for human-readable display.
- * ≥1M → "1.2M", ≥1K → "500K", otherwise raw number.
- */
-export function formatTokens(tokens: number): string {
+// Exported via _test for testing
+function formatTokens(tokens: number): string {
     if (tokens >= 1_000_000) {
         return (tokens / 1_000_000).toFixed(1) + 'M';
     } else if (tokens >= 1000) {
@@ -232,11 +215,8 @@ export function formatTokens(tokens: number): string {
     return tokens.toString();
 }
 
-/**
- * Build the status bar item text for a session.
- * Format: "{emoji} {displayName}: {percentage}%"
- */
-export function buildSessionText(
+// Exported via _test for testing
+function buildSessionText(
     session: SessionInfo,
     config: StatusBarConfig,
     shortNames: Record<string, string>,
@@ -249,12 +229,8 @@ export function buildSessionText(
     return `${icon}${iconSpace}${displayName}: ${session.percentage}%`;
 }
 
-/**
- * Determine the background ThemeColor id based on thresholds.
- * Returns undefined (no color), "statusBarItem.warningBackground",
- * or "statusBarItem.errorBackground".
- */
-export function getBackgroundColorId(
+// Exported via _test for testing
+function getBackgroundColorId(
     percentage: number,
     warningThreshold: number,
     dangerThreshold: number,
@@ -267,10 +243,8 @@ export function getBackgroundColorId(
     return undefined;
 }
 
-/**
- * Build the tooltip Markdown content for a session status bar item.
- */
-export function buildTooltip(session: SessionInfo): string {
+// Exported via _test for testing
+function buildTooltip(session: SessionInfo): string {
     const firstMsgLine = session.firstMessage ? `💬 *"${session.firstMessage}"*\n\n` : '';
 
     return (
@@ -288,10 +262,8 @@ export function buildTooltip(session: SessionInfo): string {
     );
 }
 
-/**
- * Assign a consistent color to each project, returning a map of projectName → color.
- */
-export function assignProjectColors(
+// Exported via _test for testing
+function assignProjectColors(
     sessions: SessionInfo[],
     config: StatusBarConfig,
 ): Map<string, string> {
@@ -324,11 +296,8 @@ export function assignProjectColors(
     return projectColorMap;
 }
 
-/**
- * Filter out manually hidden sessions, auto-unhiding any with new activity.
- * Returns the visible sessions (not yet truncated).
- */
-export function filterHiddenSessions(
+// Exported via _test for testing
+function filterHiddenSessions(
     sessions: SessionInfo[],
     hiddenSessions: Map<string, number>,
 ): SessionInfo[] {
@@ -545,3 +514,15 @@ export class StatusBarManager {
         }
     }
 }
+
+export const _test = {
+    getEmojiForProject,
+    extractLastSyllable,
+    getShortName,
+    formatTokens,
+    buildSessionText,
+    getBackgroundColorId,
+    buildTooltip,
+    assignProjectColors,
+    filterHiddenSessions,
+};

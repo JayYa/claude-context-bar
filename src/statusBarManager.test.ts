@@ -6,6 +6,9 @@ import {
     StatusBarItemSnapshot,
     VSCodeSurface,
     VSCodeStatusBarItem,
+    _test,
+} from './statusBarManager';
+const {
     getEmojiForProject,
     extractLastSyllable,
     getShortName,
@@ -15,7 +18,7 @@ import {
     getBackgroundColorId,
     assignProjectColors,
     filterHiddenSessions,
-} from './statusBarManager';
+} = _test;
 import { SessionInfo } from './sessionDetection';
 
 // ============================================================================
