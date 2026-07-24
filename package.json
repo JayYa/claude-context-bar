@@ -92,8 +92,8 @@
                 },
                 "claudeContextBar.showUsage": {
                     "type": "boolean",
-                    "default": true,
-                    "description": "Show your Claude subscription usage (the 5-hour session limit from /usage) as a separate item to the right of the context items. Requires being signed in to Claude Code with a subscription."
+                    "default": false,
+                    "description": "Show your Claude subscription usage (the 5-hour session limit from /usage) as a separate item to the right of the context items. Opt-in: reads the Claude Code OAuth token and calls an undocumented Anthropic endpoint, which may stop working at any time. Requires being signed in to Claude Code with a subscription."
                 },
                 "claudeContextBar.usageWarningThreshold": {
                     "type": "number",

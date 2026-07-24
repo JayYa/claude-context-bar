@@ -756,7 +756,7 @@ async function refreshAllSessions() {
 // Render the single global usage item (e.g. "✴️ 7%") to the right of the context items.
 function renderUsageItem() {
     const config = vscode.workspace.getConfiguration('claudeContextBar');
-    const showUsage = config.get<boolean>('showUsage', true);
+    const showUsage = config.get<boolean>('showUsage', false);
 
     if (!showUsage || !usageData?.session) {
         usageItem?.dispose();
@@ -825,7 +825,7 @@ function getClaudeCodeVersion(): string | null {
 
 async function refreshUsageData() {
     const config = vscode.workspace.getConfiguration('claudeContextBar');
-    const showUsage = config.get<boolean>('showUsage', true);
+    const showUsage = config.get<boolean>('showUsage', false);
 
     if (!showUsage) {
         usageData = null;
