@@ -25,6 +25,13 @@ import * as https from 'https';
 import * as crypto from 'crypto';
 import { execFile } from 'child_process';
 
+import type { VSCodeSurface, VSCodeStatusBarItem } from './vscodeSurface';
+import { getRealVSCodeSurface } from './vscodeSurface';
+
+// ============================================================================
+// TYPES
+// ============================================================================
+
 export interface UsageMeter {
     key: string;
     label: string;
@@ -40,6 +47,36 @@ export interface UsageData {
     /** Every meter present, for the tooltip (session first, then weekly ones). */
     meters: UsageMeter[];
 }
+
+/**
+ * Configuration for the subscription usage status bar item.
+ */
+export interface UsageStatusBarConfig {
+    /** Whether to show the usage status bar item at all. */
+    showUsage: boolean;
+    /** Percentage at which to show warning color (yellow). */
+    warningThreshold: number;
+    /** Percentage at which to show danger color (red). */
+    dangerThreshold: number;
+    /** Seconds between automatic usage data refreshes. */
+    usageRefreshInterval: number;
+}
+
+/**
+ * Read-only snapshot of the subscription usage StatusBarItem for test verification.
+ */
+export interface UsageItemSnapshot {
+    /** The rendered text displayed on the status bar item. */
+    text: string;
+    /** The tooltip content as a plain string. */
+    tooltip: string;
+    /** Background color ThemeColor id, if any (e.g. "statusBarItem.errorBackground"). */
+    backgroundColor: string | undefined;
+}
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
 
 /**
  * Labels for the `limits[].kind` values that aren't derived from a model scope.
@@ -64,6 +101,13 @@ const METER_LABELS: Record<string, string> = {
     seven_day_sonnet: 'Weekly (Sonnet)',
     seven_day_oauth_apps: 'Weekly (apps)',
 };
+
+const STATUS_BAR_PRIORITY_BASE = 900;
+const ITEM_CLAUDE_ICON = '✨️';
+
+// ============================================================================
+// PARSER HELPERS
+// ============================================================================
 
 function humanizeKey(key: string): string {
     return key
@@ -139,6 +183,10 @@ function readTokenFromKeychain(): Promise<string | null> {
         );
     });
 }
+
+// ============================================================================
+// PUBLIC PARSER API
+// ============================================================================
 
 /**
  * Read the Claude Code OAuth access token from the OS credential store.
@@ -337,3 +385,271 @@ export async function getUsage(claudeCodeVersion?: string | null): Promise<Usage
     }
     return fetchUsage(token, claudeCodeVersion);
 }
+
+// ============================================================================
+// UI FORMATTING HELPERS (moved from extension.ts)
+// ============================================================================
+
+/**
+ * Format the reset countdown for display.
+ * Returns an empty string if resetsAt is null, " — resetting" if past,
+ * or a human-readable relative time (e.g. " — resets in 3h").
+ *
+ * Exposed via _test for testing.
+ */
+function formatReset(resetsAt: Date | null): string {
+    if (!resetsAt) {
+        return '';
+    }
+    const msLeft = resetsAt.getTime() - Date.now();
+    if (msLeft <= 0) {
+        return ' — resetting';
+    }
+    const hours = Math.floor(msLeft / 3_600_000);
+    const days = Math.floor(hours / 24);
+    const rel = days >= 1 ? `${days}d` : hours >= 1 ? `${hours}h` : `${Math.max(1, Math.round(msLeft / 60_000))}m`;
+    return ` — resets in ${rel}`;
+}
+
+/**
+ * Build a Markdown tooltip string for the subscription usage status bar item.
+ *
+ * Exposed via _test for testing.
+ */
+function buildUsageTooltip(data: UsageData): string {
+    const rows = data.meters
+        .map((m: UsageMeter) => `| ${m.label} | **${m.percentage}%** | ${formatReset(m.resetsAt).replace(/^ — /, '')} |`)
+        .join('\n');
+
+    return (
+        `⚡ **Claude Usage**\n\n` +
+        `| Limit | Used | Resets |\n|------|------|------|\n` +
+        rows +
+        `\n\n*Subscription rate limits (\`/usage\`)*`
+    );
+}
+
+// ============================================================================
+// SUBSCRIPTION USAGE MANAGER
+// ============================================================================
+
+/**
+ * Manages the lifecycle of a VS Code StatusBarItem that displays Claude Code
+ * subscription usage (the 5-hour session rate limit from `/usage`).
+ *
+ * Responsibilities:
+ * - Creates and manages the single subscription usage StatusBarItem
+ * - Periodic polling of the /api/oauth/usage endpoint
+ * - Threshold-based background color (warning/danger)
+ * - Tooltip Markdown formatting with all meters
+ * - Concurrency lock to prevent overlapping fetch requests
+ * - Disposal of timers and StatusBarItem
+ */
+export class SubscriptionUsageManager {
+    private item: VSCodeStatusBarItem | null = null;
+    private data: UsageData | null = null;
+    private fetchInFlight = false;
+    private interval: ReturnType<typeof setInterval> | null = null;
+    private config: UsageStatusBarConfig | null = null;
+    private vs: VSCodeSurface;
+    /** Stored from the last refresh() call so the polling timer can re-invoke it. */
+    private getVersion: (() => string | null) | null = null;
+
+    /**
+     * @param vsSurface  VS Code API surface. In production this is the real
+     *                   vscode module; in tests a mock is injected.
+     */
+    constructor(vsSurface?: VSCodeSurface) {
+        this.vs = vsSurface || getRealVSCodeSurface();
+    }
+
+    // -- Public API ---------------------------------------------------------
+
+    /**
+     * Create the StatusBarItem and start periodic polling.
+     *
+     * @param config  Initial configuration for the status bar item.
+     */
+    start(config: UsageStatusBarConfig): void {
+        this.config = config;
+        // Start the polling interval
+        this.stopInterval();
+        if (config.showUsage) {
+            this.interval = setInterval(() => {
+                if (this.getVersion) {
+                    this.refresh(this.getVersion);
+                }
+            }, config.usageRefreshInterval * 1000);
+            // unref prevents the timer from blocking process exit during tests;
+            // in VS Code the extension host manages lifecycle regardless.
+            this.interval.unref();
+        }
+        // Render immediately with any already-seeded data
+        this.render();
+    }
+
+    /**
+     * Manually refresh usage data (called on config change, window focus, etc.).
+     *
+     * @param getVersion  Callback that returns the installed Claude Code version
+     *                    string, or null. Used for the User-Agent header.
+     */
+    async refresh(getVersion: () => string | null): Promise<void> {
+        // Store for periodic polling
+        this.getVersion = getVersion;
+        if (!this.config) {
+            return;
+        }
+        if (!this.config.showUsage) {
+            this.data = null;
+            this.render();
+            return;
+        }
+        // The usage endpoint rate-limits aggressive polling; never overlap calls.
+        if (this.fetchInFlight) {
+            return;
+        }
+        this.fetchInFlight = true;
+        try {
+            const fetched = await getUsage(getVersion());
+            // Keep the last successful value on a transient failure rather than flicker.
+            if (fetched) {
+                this.data = fetched;
+            }
+        } catch {
+            // Silently ignore errors — keep last successful data.
+        } finally {
+            this.fetchInFlight = false;
+        }
+        this.render();
+    }
+
+    /**
+     * Update thresholds and visibility at runtime without restarting the timer.
+     *
+     * @param config  New configuration values.
+     */
+    updateConfig(config: UsageStatusBarConfig): void {
+        const wasShowing = this.config?.showUsage;
+        this.config = config;
+
+        // If showUsage changed to false, dispose the item
+        if (wasShowing && !config.showUsage) {
+            this.data = null;
+        }
+
+        // Restart interval if showUsage changed
+        if (!wasShowing && config.showUsage) {
+            this.stopInterval();
+            this.interval = setInterval(() => {
+                if (this.getVersion) {
+                    this.refresh(this.getVersion);
+                }
+            }, config.usageRefreshInterval * 1000);
+            this.interval.unref();
+        } else if (wasShowing && config.showUsage) {
+            // Interval duration may have changed
+            this.stopInterval();
+            this.interval = setInterval(() => {
+                if (this.getVersion) {
+                    this.refresh(this.getVersion);
+                }
+            }, config.usageRefreshInterval * 1000);
+            this.interval.unref();
+        }
+
+        this.render();
+    }
+
+    /**
+     * Dispose the StatusBarItem, clear timers, and reset all state.
+     */
+    dispose(): void {
+        this.stopInterval();
+        this.item?.dispose();
+        this.item = null;
+        this.data = null;
+        this.config = null;
+        this.getVersion = null;
+    }
+
+    /**
+     * Return read-only snapshots of the current item, for test verification.
+     * Returns a single-item array when an item is displayed, or an empty array.
+     */
+    getItems(): UsageItemSnapshot[] {
+        if (!this.item) {
+            return [];
+        }
+        return [{
+            text: this.item.text,
+            tooltip: this.item.tooltip?.value || '',
+            backgroundColor: this.item.backgroundColor?.id,
+        }];
+    }
+
+    // -- Internal -----------------------------------------------------------
+
+    private stopInterval(): void {
+        if (this.interval) {
+            clearInterval(this.interval);
+            this.interval = null;
+        }
+    }
+
+    /**
+     * Render the single global usage item (e.g. "✨️ 7%") based on current
+     * config and data.
+     */
+    private render(): void {
+        const config = this.config;
+        if (!config?.showUsage || !this.data?.session) {
+            this.item?.dispose();
+            this.item = null;
+            return;
+        }
+
+        if (!this.item) {
+            // Priority just below the context items (which start at 901) so this
+            // sits immediately to their right, still left of Claude Code's own items.
+            this.item = this.vs.createStatusBarItem(
+                this.vs.StatusBarAlignment.Right,
+                STATUS_BAR_PRIORITY_BASE,
+            );
+        }
+
+        const session = this.data.session;
+        this.item.text = `${ITEM_CLAUDE_ICON} ${session.percentage}%`;
+
+        if (session.percentage >= config.dangerThreshold) {
+            this.item.backgroundColor = new this.vs.ThemeColor('statusBarItem.errorBackground');
+        } else if (session.percentage >= config.warningThreshold) {
+            this.item.backgroundColor = new this.vs.ThemeColor('statusBarItem.warningBackground');
+        } else {
+            this.item.backgroundColor = undefined;
+        }
+
+        this.item.tooltip = new this.vs.MarkdownString(buildUsageTooltip(this.data));
+        this.item.show();
+    }
+}
+
+// ============================================================================
+// TEST EXPORTS (ADR-0001)
+// ============================================================================
+
+/**
+ * @internal — test-only backdoor to inject usage data without network calls.
+ * Exported separately from _test because it is a side-effecting helper,
+ * not a pure function.
+ */
+export function _setData(manager: SubscriptionUsageManager, data: UsageData | null): void {
+    (manager as any).data = data;
+}
+
+export const _test = {
+    parseUsage,
+    fetchUsage,
+    formatReset,
+    buildUsageTooltip,
+};
