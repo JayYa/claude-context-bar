@@ -37,6 +37,7 @@ whats-next.md
 
 # Lock file not needed in published extension
 package-lock.json
+pnpm-lock.yaml
 
 # Generated knowledge graph
 graphify-out/
