@@ -30,6 +30,14 @@ _Avoid_: Token Count, Context Size
 扫描 `~/.claude/projects/` 目录，找出所有在当前 Idle Timeout 内有过修改的 Session File，并过滤掉 Ghost Session 的过程。由文件变更事件和定时轮询触发。
 _Avoid_: Session Scan, Session Discovery
 
+**Subscription Usage（订阅用量）**：
+用户 Claude 订阅计划中的速率限制，包含 5 小时会话限额和周限额。由 Anthropic `/api/oauth/usage` 端点返回，与本地 Session File 无关。
+_Avoid_: Usage, Rate Limits
+
+**Subscription Usage Meter（订阅用量表）**：
+单个速率限制维度的度量值，包含利用率百分比、重置时间、是否当前生效。示例：Session (5h) 73%、Weekly (Opus) 45%。
+_Avoid_: Usage Meter, Rate Limit Bucket
+
 ### Session 生命周期
 
 **Ghost Session（幽灵会话）**：
