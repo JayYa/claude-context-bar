@@ -2,12 +2,12 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { getClaudeProjectsDir } from './sessionFile';
 import { detectSessions, DetectionOptions } from './sessionDetection';
-import { StatusBarConfig, StatusBarManager } from './statusBarManager';
+import { ContextUsageConfig, ContextUsageManager } from './contextUsageManager';
 import { getUsage, UsageData, UsageMeter } from './usage';
 
 let fileWatcher: fs.FSWatcher | null = null;
 let refreshInterval: NodeJS.Timeout | null = null;
-let manager: StatusBarManager;
+let manager: ContextUsageManager;
 
 // Subscription usage shown in a single
 // status bar item to the right of the per-tab context items.
@@ -21,7 +21,7 @@ const ITEM_CLAUDE_ICON = '✨️';
 export function activate(context: vscode.ExtensionContext) {
     console.log('Claude Context Bar is now active');
 
-    manager = new StatusBarManager();
+    manager = new ContextUsageManager();
 
     // Register command to hide a session (triggered by clicking status bar item)
     const hideCommand = vscode.commands.registerCommand('claudeContextBar.hideSession', (sessionFile: string) => {
@@ -218,7 +218,7 @@ async function refreshAllSessions() {
 
     const sessions = await detectSessions(claudeDir, detectionOptions);
 
-    const statusBarConfig: StatusBarConfig = {
+    const contextUsageConfig: ContextUsageConfig = {
         warningThreshold: config.get<number>('warningThreshold', 50),
         dangerThreshold: config.get<number>('dangerThreshold', 75),
         autoColor: config.get<boolean>('autoColor', true),
@@ -229,7 +229,7 @@ async function refreshAllSessions() {
 
     const shortNames = config.get<Record<string, string>>('shortNames', {});
 
-    manager.updateSessions(sessions, statusBarConfig, shortNames);
+    manager.updateSessions(sessions, contextUsageConfig, shortNames);
 
     // Render the usage item to the right of the context items.
     renderUsageItem();

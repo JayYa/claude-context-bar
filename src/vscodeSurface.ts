@@ -3,7 +3,7 @@
 // ============================================================================
 
 /**
- * Minimal surface of VS Code APIs that StatusBarManager depends on.
+ * Minimal surface of VS Code APIs that ContextUsageManager depends on.
  *
  * In the extension, the real vscode module is used. In tests, a mock
  * implementation is injected so tests can run without the vscode runtime.

@@ -1,11 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    StatusBarConfig,
-    StatusBarManager,
-    StatusBarItemSnapshot,
+    ContextUsageConfig,
+    ContextUsageManager,
+    ContextUsageItemSnapshot,
     _test,
-} from './statusBarManager';
+} from './contextUsageManager';
 import { VSCodeSurface, VSCodeStatusBarItem } from './vscodeSurface';
 const {
     getEmojiForProject,
@@ -26,7 +26,7 @@ import { SessionInfo } from './sessionDetection';
 
 /**
  * Create a minimal SessionInfo object for testing.
- * Only the fields relevant to StatusBarManager are populated.
+ * Only the fields relevant to ContextUsageManager are populated.
  */
 function makeSession(overrides: Partial<SessionInfo> & { projectName: string }): SessionInfo {
     const now = new Date('2026-07-15T10:00:00Z');
@@ -50,7 +50,7 @@ function makeSession(overrides: Partial<SessionInfo> & { projectName: string }):
 }
 
 /** Default config with safe thresholds. */
-const defaultConfig: StatusBarConfig = {
+const defaultConfig: ContextUsageConfig = {
     warningThreshold: 50,
     dangerThreshold: 75,
     autoColor: true,
@@ -409,12 +409,12 @@ describe('filterHiddenSessions', () => {
 });
 
 // ============================================================================
-// StatusBarConfig TYPE TEST
+// ContextUsageConfig TYPE TEST
 // ============================================================================
 
-describe('StatusBarConfig', () => {
+describe('ContextUsageConfig', () => {
     it('contains exactly 6 fields', () => {
-        const config: StatusBarConfig = {
+        const config: ContextUsageConfig = {
             warningThreshold: 50,
             dangerThreshold: 75,
             autoColor: true,
@@ -435,14 +435,14 @@ describe('StatusBarConfig', () => {
 });
 
 // ============================================================================
-// StatusBarManager INTEGRATION TESTS
+// ContextUsageManager INTEGRATION TESTS
 // ============================================================================
 
-describe('StatusBarManager', () => {
+describe('ContextUsageManager', () => {
     describe('updateSessions', () => {
         it('creates correct number of StatusBarItems for multiple projects', () => {
             const { surface, createdItems } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
             const sessions = [
                 makeSession({ projectName: 'alpha', sessionFile: '/f/a.jsonl' }),
                 makeSession({ projectName: 'beta', sessionFile: '/f/b.jsonl' }),
@@ -458,7 +458,7 @@ describe('StatusBarManager', () => {
 
         it('creates zero items for empty sessions', () => {
             const { surface, createdItems } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             manager.updateSessions([], defaultConfig);
 
@@ -468,7 +468,7 @@ describe('StatusBarManager', () => {
 
         it('text format matches "{emoji} {displayName}: {percentage}%"', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
             const sessions = [
                 makeSession({ projectName: 'my-project', percentage: 42, sessionFile: '/f/a.jsonl' }),
             ];
@@ -486,7 +486,7 @@ describe('StatusBarManager', () => {
 
         it('sets warning backgroundColor at warning threshold', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
             const sessions = [
                 makeSession({ projectName: 'test', percentage: 55, sessionFile: '/f/a.jsonl' }),
             ];
@@ -500,7 +500,7 @@ describe('StatusBarManager', () => {
 
         it('sets error backgroundColor at danger threshold', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
             const sessions = [
                 makeSession({ projectName: 'test', percentage: 80, sessionFile: '/f/a.jsonl' }),
             ];
@@ -514,7 +514,7 @@ describe('StatusBarManager', () => {
 
         it('sets no backgroundColor below warning threshold', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
             const sessions = [
                 makeSession({ projectName: 'test', percentage: 30, sessionFile: '/f/a.jsonl' }),
             ];
@@ -528,7 +528,7 @@ describe('StatusBarManager', () => {
 
         it('compactMode uses short names', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
             const config = { ...defaultConfig, compactMode: true };
             const sessions = [
                 makeSession({ projectName: 'my-cool-project', percentage: 10, sessionFile: '/f/a.jsonl' }),
@@ -543,7 +543,7 @@ describe('StatusBarManager', () => {
 
         it('showEmoji false omits emoji', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
             const config = { ...defaultConfig, showEmoji: false };
             const sessions = [
                 makeSession({ projectName: 'my-project', percentage: 10, sessionFile: '/f/a.jsonl' }),
@@ -559,7 +559,7 @@ describe('StatusBarManager', () => {
 
         it('tooltip includes all required sections', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
             const sessions = [
                 makeSession({
                     projectName: 'my-project',
@@ -590,7 +590,7 @@ describe('StatusBarManager', () => {
 
         it('disposes old items when sessions decrease', () => {
             const { surface, createdItems } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const sessions = [
                 makeSession({ projectName: 'alpha', sessionFile: '/f/a.jsonl' }),
@@ -613,7 +613,7 @@ describe('StatusBarManager', () => {
 
         it('reuses existing items when session files match', () => {
             const { surface, createdItems } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const sessions = [
                 makeSession({ projectName: 'alpha', percentage: 10, sessionFile: '/f/a.jsonl' }),
@@ -637,7 +637,7 @@ describe('StatusBarManager', () => {
     describe('hideSession', () => {
         it('removes hidden session from items', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const sessions = [
                 makeSession({ projectName: 'alpha', sessionFile: '/f/a.jsonl' }),
@@ -655,7 +655,7 @@ describe('StatusBarManager', () => {
 
         it('auto-unhides session when new activity detected', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const now = new Date();
             const session = makeSession({
@@ -687,7 +687,7 @@ describe('StatusBarManager', () => {
     describe('top-5 truncation', () => {
         it('shows only 5 sessions when more exist', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const sessions = Array.from({ length: 8 }, (_, i) =>
                 makeSession({
@@ -704,7 +704,7 @@ describe('StatusBarManager', () => {
 
         it('shows all sessions when 5 or fewer', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const sessions = Array.from({ length: 3 }, (_, i) =>
                 makeSession({
@@ -722,7 +722,7 @@ describe('StatusBarManager', () => {
     describe('dispose', () => {
         it('disposes all items and clears state', () => {
             const { surface, createdItems } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const sessions = [
                 makeSession({ projectName: 'alpha', sessionFile: '/f/a.jsonl' }),
@@ -742,7 +742,7 @@ describe('StatusBarManager', () => {
 
         it('clears hidden sessions on dispose', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             manager.updateSessions(
                 [makeSession({ projectName: 'test', sessionFile: '/f/a.jsonl' })],
@@ -767,7 +767,7 @@ describe('StatusBarManager', () => {
     describe('getItems', () => {
         it('returns correct sessionFile for each item', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const sessions = [
                 makeSession({ projectName: 'alpha', sessionFile: '/f/alpha.jsonl' }),
@@ -782,7 +782,7 @@ describe('StatusBarManager', () => {
 
         it('returns correct text for each item', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const sessions = [
                 makeSession({ projectName: 'alpha', percentage: 30, sessionFile: '/f/a.jsonl' }),
@@ -797,7 +797,7 @@ describe('StatusBarManager', () => {
 
         it('returns correct color for each item', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const sessions = [
                 makeSession({ projectName: 'alpha', sessionFile: '/f/a.jsonl' }),
@@ -813,7 +813,7 @@ describe('StatusBarManager', () => {
 
         it('returns backgroundColor for items at threshold', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const sessions = [
                 makeSession({ projectName: 'low', percentage: 10, sessionFile: '/f/low.jsonl' }),
@@ -834,7 +834,7 @@ describe('StatusBarManager', () => {
     describe('color assignment per project', () => {
         it('assigns a color from the palette to every session item', () => {
             const { surface } = makeMockVSCodeSurface();
-            const manager = new StatusBarManager(surface);
+            const manager = new ContextUsageManager(surface);
 
             const sessions = [
                 makeSession({ projectName: 'myproject', sessionFile: '/f/a.jsonl', sessionId: 'a' }),

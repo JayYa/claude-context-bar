@@ -6,11 +6,11 @@
 
 ## 背景
 
-项目经历多次模块提取（`sessionFile`、`sessionDetection`、`statusBarManager`），纯函数被直接 `export` 以便单元测试。当前有 ~12 个函数标注为 "exported for testing"，包括：
+项目经历多次模块提取（`sessionFile`、`sessionDetection`、`contextUsageManager`），纯函数被直接 `export` 以便单元测试。当前有 ~12 个函数标注为 "exported for testing"，包括：
 
 - `sessionFile.ts`：`decodeProjectPath`（公开接口，保留）
 - `sessionDetection.ts`：`processSessionGroups`、`creationTime`
-- `statusBarManager.ts`：`getEmojiForProject`、`extractLastSyllable`、`getShortName`、`formatTokens`、`buildSessionText`、`getBackgroundColorId`、`buildTooltip`、`assignProjectColors`、`filterHiddenSessions`
+- `contextUsageManager.ts`：`getEmojiForProject`、`extractLastSyllable`、`getShortName`、`formatTokens`、`buildSessionText`、`getBackgroundColorId`、`buildTooltip`、`assignProjectColors`、`filterHiddenSessions`
 
 这些函数并非模块对外接口的一部分——它们纯粹是实现细节。直接 `export` 使公共接口膨胀，并暗示其他模块可以合法依赖它们。
 
@@ -83,5 +83,5 @@ export namespace _test { export const fn = _fn; }
 
 1. `sessionFile.ts`：新增 6 个 `_test` 函数，保留 `decodeProjectPath` 为公开 export（被 `sessionDetection.ts` 使用）
 2. `sessionDetection.ts`：`processSessionGroups` 从公开 export 移入 `_test`
-3. `statusBarManager.ts`：9 个纯函数从公开 export 移入 `_test`
+3. `contextUsageManager.ts`：9 个纯函数从公开 export 移入 `_test`
 4. 对应测试文件同步更新 import

@@ -8,12 +8,12 @@ import { getRealVSCodeSurface } from './vscodeSurface';
 import { formatTokens } from './format';
 
 /**
- * Configuration for StatusBarItem rendering.
+ * Configuration for Context Usage status bar item rendering.
  *
  * Six fields sourced from the VS Code configuration that control how
  * each session is displayed in the status bar.
  */
-export interface StatusBarConfig {
+export interface ContextUsageConfig {
     /** Percentage at which to show warning color (yellow). */
     warningThreshold: number;
     /** Percentage at which to show danger color (red). */
@@ -31,7 +31,7 @@ export interface StatusBarConfig {
 /**
  * Read-only snapshot of a StatusBarItem for test verification.
  */
-export interface StatusBarItemSnapshot {
+export interface ContextUsageItemSnapshot {
     /** Full path to the session's .jsonl file (used as the unique key). */
     sessionFile: string;
     /** The rendered text displayed on the status bar item. */
@@ -164,7 +164,7 @@ function getShortName(projectName: string, customNames: Record<string, string>):
 /** Exported via _test for testing. */
 function buildSessionText(
     session: SessionInfo,
-    config: StatusBarConfig,
+    config: ContextUsageConfig,
     shortNames: Record<string, string>,
 ): string {
     const icon = config.showEmoji ? getEmojiForProject(session.projectName) : '';
@@ -211,7 +211,7 @@ function buildTooltip(session: SessionInfo): string {
 /** Exported via _test for testing. */
 function assignProjectColors(
     sessions: SessionInfo[],
-    config: StatusBarConfig,
+    config: ContextUsageConfig,
 ): Map<string, string> {
     const projectColorMap = new Map<string, string>();
     let colorIndex = 0;
@@ -265,7 +265,7 @@ function filterHiddenSessions(
 }
 
 // ============================================================================
-// STATUS BAR MANAGER
+// CONTEXT USAGE MANAGER
 // ============================================================================
 
 /**
@@ -280,11 +280,11 @@ function filterHiddenSessions(
  * - StatusBarItem creation, update, and disposal
  * - Hidden session tracking
  */
-export class StatusBarManager {
+export class ContextUsageManager {
     private items = new Map<string, VSCodeStatusBarItem>();
     private hiddenSessions = new Map<string, number>();
     private lastSessions: SessionInfo[] = [];
-    private lastConfig: StatusBarConfig | null = null;
+    private lastConfig: ContextUsageConfig | null = null;
     private lastShortNames: Record<string, string> = {};
     private vs: VSCodeSurface;
 
@@ -310,7 +310,7 @@ export class StatusBarManager {
      */
     updateSessions(
         sessions: SessionInfo[],
-        config: StatusBarConfig,
+        config: ContextUsageConfig,
         shortNames?: Record<string, string>,
     ): void {
         this.lastSessions = sessions;
@@ -358,8 +358,8 @@ export class StatusBarManager {
     /**
      * Return read-only snapshots of the current items, for test verification.
      */
-    getItems(): StatusBarItemSnapshot[] {
-        const result: StatusBarItemSnapshot[] = [];
+    getItems(): ContextUsageItemSnapshot[] {
+        const result: ContextUsageItemSnapshot[] = [];
         // Iterate over lastSessions order to maintain consistent ordering
         const seen = new Set<string>();
         for (const session of this.lastSessions) {
@@ -397,7 +397,7 @@ export class StatusBarManager {
      */
     private renderItems(
         sessions: SessionInfo[],
-        config: StatusBarConfig,
+        config: ContextUsageConfig,
         projectColorMap: Map<string, string>,
     ): void {
         const seenPaths = new Set<string>();
