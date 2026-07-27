@@ -106,15 +106,6 @@ export function deactivate() {
     usageItem = null;
 }
 
-function formatTokens(tokens: number): string {
-    if (tokens >= 1_000_000) {
-        return (tokens / 1_000_000).toFixed(1) + 'M';
-    } else if (tokens >= 1000) {
-        return Math.round(tokens / 1000) + 'K';
-    }
-    return tokens.toString();
-}
-
 // Render the single global usage item (e.g. "✴️ 7%") to the right of the context items.
 function renderUsageItem() {
     const config = vscode.workspace.getConfiguration('claudeContextBar');

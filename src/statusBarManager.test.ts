@@ -4,10 +4,9 @@ import {
     StatusBarConfig,
     StatusBarManager,
     StatusBarItemSnapshot,
-    VSCodeSurface,
-    VSCodeStatusBarItem,
     _test,
 } from './statusBarManager';
+import { VSCodeSurface, VSCodeStatusBarItem } from './vscodeSurface';
 const {
     getEmojiForProject,
     extractLastSyllable,

@@ -3,6 +3,9 @@
 // ============================================================================
 
 import type { SessionInfo } from './sessionDetection';
+import type { VSCodeSurface, VSCodeStatusBarItem } from './vscodeSurface';
+import { getRealVSCodeSurface } from './vscodeSurface';
+import { formatTokens } from './format';
 
 /**
  * Configuration for StatusBarItem rendering.
@@ -42,36 +45,6 @@ export interface StatusBarItemSnapshot {
 }
 
 // ============================================================================
-// VS CODE SURFACE (dependency injection for testability)
-// ============================================================================
-
-/**
- * Minimal surface of VS Code APIs that StatusBarManager depends on.
- *
- * In the extension, the real vscode module is used. In tests, a mock
- * implementation is injected so tests can run without the vscode runtime.
- */
-export interface VSCodeSurface {
-    createStatusBarItem(alignment: number, priority: number): VSCodeStatusBarItem;
-    ThemeColor: new (id: string) => { id: string };
-    MarkdownString: new (value: string, supportHtml?: boolean) => { value: string };
-    StatusBarAlignment: { Right: number };
-}
-
-/**
- * Minimal interface matching vscode.StatusBarItem.
- */
-export interface VSCodeStatusBarItem {
-    show(): void;
-    dispose(): void;
-    text: string;
-    tooltip: { value: string };
-    color: string | undefined;
-    backgroundColor: { id: string } | undefined;
-    command: { command: string; title: string; arguments: string[] } | undefined;
-}
-
-// ============================================================================
 // CONSTANTS
 // ============================================================================
 
@@ -99,23 +72,6 @@ const BASE_COLOR_VARIATIONS: Record<string, string[]> = {
     'Orange': ['#ffd6a5', '#f5cc9b', '#ebc291', '#e1b887', '#d7ae7d'],
     'Pink': ['#ffc6ff', '#f5bcf5', '#ebb2eb', '#e1a8e1', '#d79ed7'],
 };
-
-// ============================================================================
-// REAL VS CODE SURFACE
-// ============================================================================
-
-function getRealVSCodeSurface(): VSCodeSurface {
-    // Dynamic require — only called in the extension context, never in tests.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const vscode = require('vscode');
-    return {
-        createStatusBarItem: (alignment: number, priority: number) =>
-            vscode.window.createStatusBarItem(alignment, priority),
-        ThemeColor: vscode.ThemeColor,
-        MarkdownString: vscode.MarkdownString,
-        StatusBarAlignment: { Right: vscode.StatusBarAlignment.Right },
-    };
-}
 
 // ============================================================================
 // INTERNAL (exported via _test for testing)
@@ -203,16 +159,6 @@ function getShortName(projectName: string, customNames: Record<string, string>):
     }
 
     return shortBase + sessionSuffix;
-}
-
-/** Exported via _test for testing. Formats token count with K/M suffix for display. */
-function formatTokens(tokens: number): string {
-    if (tokens >= 1_000_000) {
-        return (tokens / 1_000_000).toFixed(1) + 'M';
-    } else if (tokens >= 1000) {
-        return Math.round(tokens / 1000) + 'K';
-    }
-    return tokens.toString();
 }
 
 /** Exported via _test for testing. */
