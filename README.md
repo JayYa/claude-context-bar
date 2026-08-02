@@ -6,8 +6,6 @@
 
 🧠 **Live Context Tracking** — See your Claude Code context usage percentage right in the status bar
 
-✴️ **Subscription Usage** — Opt-in (off by default): see your Claude `/usage` Session (5-hour) limit as its own status bar item (e.g. `✴️ 7%`), with color-coded warnings independent of the context colors. Hover for the full breakdown (Weekly, and per-model limits like Weekly Fable) with reset times. Experimental, may stop working at any time (see [Subscription usage](#subscription-usage))
-
 ⚡ **Per-Tab Monitoring** — Each Claude Code tab gets its own context indicator
 
 🎯 **Fuzzy Emoji Matching** — Icons automatically match your project type based on name keywords:
@@ -42,6 +40,9 @@
 👆 **Click to Hide** — Click any context bar item to temporarily hide it; reappears on new activity
 
 📐 **Compact Mode** — Shorten project names to save space (my-cool-project → MCP, typescript → Tscript)
+
+✴️ **Subscription Usage** — Opt-in (off by default): see your Claude `/usage` Session (5-hour) limit as its own status bar item (e.g. `✴️ 7%`), with color-coded warnings independent of the context colors. Hover for the full breakdown (Weekly, and per-model limits like Weekly Fable) with reset times. Experimental, may stop working at any time (see [Subscription usage](#subscription-usage))
+
 
 ## Requirements
 
