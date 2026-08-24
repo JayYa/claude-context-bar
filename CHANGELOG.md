@@ -2,6 +2,16 @@
 
 All notable changes to the Claude Context Bar extension will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Settings are now split into four labeled sections in the VS Code settings UI — **Appearance**, **Context Window**, **Subscription Usage** and **Behavior** — and ordered within each section so that a toggle is immediately followed by the settings it governs (`autoColor` → `baseColor`, `showUsage` → its thresholds and interval). No setting was renamed, added, removed, or given a new default; existing `settings.json` files keep working unchanged.
+- Setting descriptions that contain examples or cross-references now render as Markdown, so JSON examples appear as code and `baseColor`/`modelContextLimits` link to the settings they depend on.
+- README configuration table split into one table per section, matching the settings UI order.
+
+### Added
+- `CONTEXT.md`: a bilingual glossary defining the four settings groups and the Context limit vs Usage limit distinction, so new settings have a documented home.
+
 ## [1.6.0] - 2026-07-24
 
 ### Added
