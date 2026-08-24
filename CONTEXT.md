@@ -18,8 +18,8 @@ Settings that change how a status bar item looks or reads — its icon, its colo
 _Avoid_: Display, UI, Style, Cosmetic / 显示、界面、样式、美化
 
 **Context Window（上下文窗口）**:
-Settings that define a model's context budget and the thresholds at which consumption of that budget is called out as warning or danger.
-定义模型的上下文预算，以及消耗到多少时标记为警告或危险。
+Settings that define a model's context budget and the token counts at which consumption of that budget is called out as warning or danger.
+定义模型的上下文预算，以及已用 token 达到多少时标记为警告或危险。
 _Avoid_: Context, Limits, Tokens, Usage / 上下文、限额、令牌、用量
 
 **Subscription Usage（订阅用量）**:
@@ -43,3 +43,8 @@ _Avoid_: Usage limit, Quota / 用量额度、配额
 The account's rolling subscription allowance, shared across all conversations. Belongs to Subscription Usage.
 账户级的滚动订阅额度，所有对话共享。归属 Subscription Usage。
 _Avoid_: Context limit, Rate limit / 上下文额度、速率限制
+
+**Threshold unit（阈值单位）**:
+The unit a warning or danger threshold is expressed in. Context Window thresholds are absolute **token counts** — a fixed amount of loaded context means the same thing whatever the model's window size, whereas a percentage does not. Subscription Usage thresholds are **percentages**, because the usage source reports only a percentage and never a token count. The two groups therefore carry similar-looking settings with different units; always name the unit when discussing a threshold.
+阈值所用的单位。Context Window 的阈值是绝对 **token 数**——固定的上下文装载量在任何窗口大小下含义相同，而百分比不是。Subscription Usage 的阈值是**百分比**，因为用量来源只报百分比、从不给出 token 数。两组因此存在长得很像但单位不同的设置；讨论阈值时务必点明单位。
+_Avoid_: Threshold percentage, Limit / 阈值百分比、限额
