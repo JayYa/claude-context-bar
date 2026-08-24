@@ -14,9 +14,6 @@ All notable changes to the Claude Context Bar extension will be documented in th
 ### Deprecated
 - `claudeContextBar.warningThreshold` and `claudeContextBar.dangerThreshold` are no longer read. They remain declared so VS Code can show a deprecation notice pointing at their replacements; existing values in `settings.json` are left untouched rather than rewritten, and can be deleted at your convenience. Subscription usage thresholds (`usageWarningThreshold`, `usageDangerThreshold`) are **not** affected and stay percentage-based, because that endpoint reports only a percentage.
 
-### Added
-- `CONTEXT.md`: a bilingual glossary defining the four settings groups and the Context limit vs Usage limit distinction, so new settings have a documented home.
-
 ## [1.6.0] - 2026-07-24
 
 ### Added
