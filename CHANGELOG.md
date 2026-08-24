@@ -5,9 +5,14 @@ All notable changes to the Claude Context Bar extension will be documented in th
 ## [Unreleased]
 
 ### Changed
+- **Context colors are now based on absolute token counts instead of percentages of the context window.** New settings `warningTokens` (default 120,000) and `dangerTokens` (default 150,000) replace `warningThreshold` and `dangerThreshold`. A percentage is not comparable across models — with windows ranging from 200K (Haiku, legacy) to 1M (current frontier models), the same percentage stands for wildly different amounts of loaded context — and what degrades output quality is the absolute amount loaded. Set either to `0` to disable that color, matching the `idleTimeout: 0` convention.
+- Status bar items now show consumed tokens (`myproj: 120K`) rather than a percentage, so the number on screen is the one that explains the color. The hover tooltip is unchanged and still shows the percentage, the full token breakdown and the resolved context window size.
 - Settings are now split into four labeled sections in the VS Code settings UI — **Appearance**, **Context Window**, **Subscription Usage** and **Behavior** — and ordered within each section so that a toggle is immediately followed by the settings it governs (`autoColor` → `baseColor`, `showUsage` → its thresholds and interval). No setting was renamed, added, removed, or given a new default; existing `settings.json` files keep working unchanged.
 - Setting descriptions that contain examples or cross-references now render as Markdown, so JSON examples appear as code and `baseColor`/`modelContextLimits` link to the settings they depend on.
 - README configuration table split into one table per section, matching the settings UI order.
+
+### Deprecated
+- `claudeContextBar.warningThreshold` and `claudeContextBar.dangerThreshold` are no longer read. They remain declared so VS Code can show a deprecation notice pointing at their replacements; existing values in `settings.json` are left untouched rather than rewritten, and can be deleted at your convenience. Subscription usage thresholds (`usageWarningThreshold`, `usageDangerThreshold`) are **not** affected and stay percentage-based, because that endpoint reports only a percentage.
 
 ### Added
 - `CONTEXT.md`: a bilingual glossary defining the four settings groups and the Context limit vs Usage limit distinction, so new settings have a documented home.

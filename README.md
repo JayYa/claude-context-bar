@@ -4,7 +4,7 @@
 
 ## Features
 
-🧠 **Live Context Tracking** — See your Claude Code context usage percentage right in the status bar
+🧠 **Live Context Tracking** — See how many tokens your Claude Code session has consumed, right in the status bar
 
 ⚡ **Per-Tab Monitoring** — Each Claude Code tab gets its own context indicator
 
@@ -21,10 +21,10 @@
 
 🔍 **Smart Context Detection** — Automatically sizes the context window per model (1M for current models, 200K for Haiku and legacy), with per-model overrides
 
-⚠️ **Color-Coded Warnings**:
-- Normal: Under 50% usage
-- Warning (yellow background): 50-75% usage
-- Danger (red background): Over 75% usage
+⚠️ **Color-Coded Warnings** — by absolute tokens consumed, so they mean the same thing on a 200K and a 1M model:
+- Normal: under 120K tokens
+- Warning (yellow background): 120K–150K tokens
+- Danger (red background): over 150K tokens
 
 📊 **Detailed Tooltips** — Hover to see:
 - First message (matches Claude Code tab name)
@@ -73,8 +73,8 @@ Settings are grouped into four sections, matching the VS Code settings UI.
 |---------|---------|-------------|
 | `claudeContextBar.contextLimit` | `200000` | Fallback for unknown or non-Claude model IDs (Claude models are auto-detected) |
 | `claudeContextBar.modelContextLimits` | `{}` | Per-model overrides: Model ID → token limit (e.g., `{"claude-haiku-4-5": 500000}`). Exact match, highest priority |
-| `claudeContextBar.warningThreshold` | `50` | Percentage for yellow warning |
-| `claudeContextBar.dangerThreshold` | `75` | Percentage for red danger |
+| `claudeContextBar.warningTokens` | `120000` | Tokens consumed before the yellow warning color (`0` disables) |
+| `claudeContextBar.dangerTokens` | `150000` | Tokens consumed before the red danger color (`0` disables) |
 
 #### Subscription Usage
 
@@ -102,6 +102,8 @@ The extension reads Claude Code's session files from `~/.claude/projects/` and c
 4. **Fallback** — unknown or non-Claude Model IDs use the `contextLimit` setting (default 200,000).
 
 Claude session files record only the Model ID, with no context-window field, so the limit is inferred from the ID. The default is 1M because current frontier models all ship with a 1M window, which means new models resolve correctly with no update needed. Haiku and legacy models are the 200K exceptions. If any model is ever mis-sized (for example, your plan caps a model lower than its API window), pin an exact value in `modelContextLimits` and it always wins.
+
+Context colors are driven by an absolute token count, not a percentage of the window. With context windows ranging from 200K to 1M, the same percentage stands for very different amounts of loaded context, and what degrades output quality is the absolute amount loaded — so `warningTokens` and `dangerTokens` mean the same thing whatever model a session runs on. The status bar shows that same consumed-token figure, and the hover tooltip adds the percentage and the resolved window size. Subscription usage thresholds remain percentages, because that endpoint reports only a percentage.
 
 Sessions inactive for more than 3 minutes (configurable via `idleTimeout`, `0` disables hiding) are automatically hidden, and reappear as soon as a resumed session writes new activity. The window regaining focus also triggers an immediate rescan. The extension also detects when sessions have been superseded by newer ones (e.g., after running `/clear` and opening a new tab), hiding ghost sessions immediately.
 

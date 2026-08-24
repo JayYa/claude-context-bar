@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as readline from 'readline';
 import { getContextLimitForModel } from './contextLimit';
+import { getContextTokenLevel } from './contextThreshold';
 import { getUsage, UsageData, UsageMeter } from './usage';
 
 interface SessionInfo {
@@ -616,8 +617,8 @@ function formatTokens(tokens: number): string {
 async function refreshAllSessions() {
     const sessions = await findActiveSessions();
     const config = vscode.workspace.getConfiguration('claudeContextBar');
-    const warningThreshold = config.get<number>('warningThreshold', 50);
-    const dangerThreshold = config.get<number>('dangerThreshold', 75);
+    const warningTokens = config.get<number>('warningTokens', 120000);
+    const dangerTokens = config.get<number>('dangerTokens', 150000);
     const contextLimit = config.get<number>('contextLimit', 200000);
     const autoColor = config.get<boolean>('autoColor', true);
     const baseColor = config.get<string>('baseColor', 'White');
@@ -701,12 +702,17 @@ async function refreshAllSessions() {
         const icon = showEmoji ? getEmojiForProject(session.projectName) : '';
         const iconSpace = showEmoji ? ' ' : '';
         const displayName = compactMode ? getShortName(session.projectName, shortNames) : session.projectName;
-        entry.item.text = `${icon}${iconSpace}${displayName}: ${session.percentage}%`;
+        // Show consumed tokens: the same quantity the thresholds below test,
+        // so the displayed number is the one that drives the color. Note
+        // formatTokens rounds to the nearest K, so right at a threshold the
+        // two can disagree by under half a K.
+        entry.item.text = `${icon}${iconSpace}${displayName}: ${formatTokens(session.totalTokens)}`;
 
-        // Set background color based on thresholds
-        if (session.percentage >= dangerThreshold) {
+        // Set background color from absolute token consumption
+        const level = getContextTokenLevel(session.totalTokens, warningTokens, dangerTokens);
+        if (level === 'danger') {
             entry.item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-        } else if (session.percentage >= warningThreshold) {
+        } else if (level === 'warning') {
             entry.item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
         } else {
             entry.item.backgroundColor = undefined;
