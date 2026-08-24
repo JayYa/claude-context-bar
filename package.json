@@ -42,98 +42,134 @@
     ],
     "main": "./out/extension.js",
     "contributes": {
-        "configuration": {
-            "title": "Claude Context Bar",
-            "properties": {
-                "claudeContextBar.autoColor": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Automatically assign different colors to each project (rainbow). When off, uses your base color with subtle variations."
-                },
-                "claudeContextBar.baseColor": {
-                    "type": "string",
-                    "enum": [
-                        "White",
-                        "Blue",
-                        "Purple",
-                        "Cyan",
-                        "Green",
-                        "Yellow",
-                        "Orange",
-                        "Pink"
-                    ],
-                    "default": "White",
-                    "description": "Base color when Auto Color is off. Each project gets a subtle variation of this color."
-                },
-                "claudeContextBar.showEmoji": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show emoji icons based on project name (music 🎵, code 💻, game 🎮, etc.)"
-                },
-                "claudeContextBar.contextLimit": {
-                    "type": "number",
-                    "default": 200000,
-                    "description": "Fallback context window size in tokens, used only for unknown or non-Claude model IDs. Current Claude models are auto-detected (1M by default, 200K for Haiku and legacy models)."
-                },
-                "claudeContextBar.modelContextLimits": {
-                    "type": "object",
-                    "default": {},
-                    "description": "Per-model context limit overrides (Model ID → token limit). Exact match only, no glob or prefix matching. Example: {\"claude-haiku-4-5\": 500000}. Highest priority: overrides auto-detection and the fallback for that exact model."
-                },
-                "claudeContextBar.warningThreshold": {
-                    "type": "number",
-                    "default": 50,
-                    "description": "Percentage at which to show warning color (yellow)"
-                },
-                "claudeContextBar.dangerThreshold": {
-                    "type": "number",
-                    "default": 75,
-                    "description": "Percentage at which to show danger color (red)"
-                },
-                "claudeContextBar.showUsage": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Show your Claude subscription usage (the 5-hour session limit from /usage) as a separate item to the right of the context items. Opt-in: reads the Claude Code OAuth token and calls an undocumented Anthropic endpoint, which may stop working at any time. Requires being signed in to Claude Code with a subscription."
-                },
-                "claudeContextBar.usageWarningThreshold": {
-                    "type": "number",
-                    "default": 50,
-                    "description": "Usage percentage at which to show warning color (yellow) on the usage item"
-                },
-                "claudeContextBar.usageDangerThreshold": {
-                    "type": "number",
-                    "default": 75,
-                    "description": "Usage percentage at which to show danger color (red) on the usage item"
-                },
-                "claudeContextBar.usageRefreshInterval": {
-                    "type": "number",
-                    "default": 60,
-                    "description": "How often (in seconds) to refresh subscription usage from the /usage endpoint. The endpoint rate-limits aggressive polling, so avoid very low values."
-                },
-                "claudeContextBar.refreshInterval": {
-                    "type": "number",
-                    "default": 30,
-                    "description": "Refresh interval in seconds"
-                },
-                "claudeContextBar.idleTimeout": {
-                    "type": "number",
-                    "default": 180,
-                    "minimum": 0,
-                    "maximum": 9999999,
-                    "description": "Seconds of inactivity before hiding a session (default: 180 / 3 minutes). Set 0 to never hide idle sessions. Click to manually hide."
-                },
-                "claudeContextBar.compactMode": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Shorten project names to save status bar space. Multi-word names become acronyms (my-cool-project → MCP), single words become abbreviated (typescript → Tscript). Names ≤5 chars stay unchanged."
-                },
-                "claudeContextBar.shortNames": {
-                    "type": "object",
-                    "default": {},
-                    "description": "Custom short names for projects. Keys are project names, values are the short versions (e.g. {\"my-cool-project\": \"MCP\", \"webapp\": \"WA\"})."
+        "configuration": [
+            {
+                "title": "Appearance",
+                "order": 1,
+                "properties": {
+                    "claudeContextBar.showEmoji": {
+                        "type": "boolean",
+                        "default": true,
+                        "order": 1,
+                        "description": "Show emoji icons based on project name (music 🎵, code 💻, game 🎮, etc.)"
+                    },
+                    "claudeContextBar.autoColor": {
+                        "type": "boolean",
+                        "default": true,
+                        "order": 2,
+                        "description": "Automatically assign different colors to each project (rainbow). When off, uses your base color with subtle variations."
+                    },
+                    "claudeContextBar.baseColor": {
+                        "type": "string",
+                        "enum": [
+                            "White",
+                            "Blue",
+                            "Purple",
+                            "Cyan",
+                            "Green",
+                            "Yellow",
+                            "Orange",
+                            "Pink"
+                        ],
+                        "default": "White",
+                        "order": 3,
+                        "markdownDescription": "Base color when `#claudeContextBar.autoColor#` is off. Each project gets a subtle variation of this color."
+                    },
+                    "claudeContextBar.compactMode": {
+                        "type": "boolean",
+                        "default": false,
+                        "order": 4,
+                        "markdownDescription": "Shorten project names to save status bar space. Multi-word names become acronyms (`my-cool-project` → `MCP`), single words become abbreviated (`typescript` → `Tscript`). Names ≤5 chars stay unchanged."
+                    },
+                    "claudeContextBar.shortNames": {
+                        "type": "object",
+                        "default": {},
+                        "order": 5,
+                        "markdownDescription": "Custom short names for projects. Keys are project names, values are the short versions, e.g. `{\"my-cool-project\": \"MCP\", \"webapp\": \"WA\"}`."
+                    }
+                }
+            },
+            {
+                "title": "Context Window",
+                "order": 2,
+                "properties": {
+                    "claudeContextBar.contextLimit": {
+                        "type": "number",
+                        "default": 200000,
+                        "order": 1,
+                        "description": "Fallback context window size in tokens, used only for unknown or non-Claude model IDs. Current Claude models are auto-detected (1M by default, 200K for Haiku and legacy models)."
+                    },
+                    "claudeContextBar.modelContextLimits": {
+                        "type": "object",
+                        "default": {},
+                        "order": 2,
+                        "markdownDescription": "Per-model context limit overrides (Model ID → token limit). Exact match only, no glob or prefix matching, e.g. `{\"claude-haiku-4-5\": 500000}`. Highest priority: overrides auto-detection and `#claudeContextBar.contextLimit#` for that exact model."
+                    },
+                    "claudeContextBar.warningThreshold": {
+                        "type": "number",
+                        "default": 50,
+                        "order": 3,
+                        "description": "Percentage of the context window at which to show warning color (yellow)"
+                    },
+                    "claudeContextBar.dangerThreshold": {
+                        "type": "number",
+                        "default": 75,
+                        "order": 4,
+                        "description": "Percentage of the context window at which to show danger color (red)"
+                    }
+                }
+            },
+            {
+                "title": "Subscription Usage",
+                "order": 3,
+                "properties": {
+                    "claudeContextBar.showUsage": {
+                        "type": "boolean",
+                        "default": false,
+                        "order": 1,
+                        "markdownDescription": "Show your Claude subscription usage (the 5-hour session limit from `/usage`) as a separate item to the right of the context items. Opt-in: reads the Claude Code OAuth token and calls an undocumented Anthropic endpoint, which may stop working at any time. Requires being signed in to Claude Code with a subscription."
+                    },
+                    "claudeContextBar.usageWarningThreshold": {
+                        "type": "number",
+                        "default": 50,
+                        "order": 2,
+                        "description": "Usage percentage at which to show warning color (yellow) on the usage item"
+                    },
+                    "claudeContextBar.usageDangerThreshold": {
+                        "type": "number",
+                        "default": 75,
+                        "order": 3,
+                        "description": "Usage percentage at which to show danger color (red) on the usage item"
+                    },
+                    "claudeContextBar.usageRefreshInterval": {
+                        "type": "number",
+                        "default": 60,
+                        "order": 4,
+                        "markdownDescription": "How often (in seconds) to refresh subscription usage from the `/usage` endpoint. The endpoint rate-limits aggressive polling, so avoid very low values."
+                    }
+                }
+            },
+            {
+                "title": "Behavior",
+                "order": 4,
+                "properties": {
+                    "claudeContextBar.refreshInterval": {
+                        "type": "number",
+                        "default": 30,
+                        "order": 1,
+                        "description": "How often (in seconds) to refresh context usage from Claude Code session files"
+                    },
+                    "claudeContextBar.idleTimeout": {
+                        "type": "number",
+                        "default": 180,
+                        "minimum": 0,
+                        "maximum": 9999999,
+                        "order": 2,
+                        "description": "Seconds of inactivity before hiding a session (default: 180 / 3 minutes). Set 0 to never hide idle sessions. Click to manually hide."
+                    }
                 }
             }
-        }
+        ]
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",

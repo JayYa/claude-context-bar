@@ -55,23 +55,42 @@
 
 ## Configuration
 
+Settings are grouped into four sections, matching the VS Code settings UI.
+
+#### Appearance
+
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `claudeContextBar.showEmoji` | `true` | Show emoji icons based on project name keywords |
 | `claudeContextBar.autoColor` | `true` | Automatically assign unique pastel colors to each project |
 | `claudeContextBar.baseColor` | `White` | Base color when Auto Color is off (subtle variations per project) |
+| `claudeContextBar.compactMode` | `false` | Shorten project names to save status bar space |
+| `claudeContextBar.shortNames` | `{}` | Custom short names for projects (e.g., `{"my-project": "MP"}`) |
+
+#### Context Window
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `claudeContextBar.contextLimit` | `200000` | Fallback for unknown or non-Claude model IDs (Claude models are auto-detected) |
 | `claudeContextBar.modelContextLimits` | `{}` | Per-model overrides: Model ID → token limit (e.g., `{"claude-haiku-4-5": 500000}`). Exact match, highest priority |
 | `claudeContextBar.warningThreshold` | `50` | Percentage for yellow warning |
 | `claudeContextBar.dangerThreshold` | `75` | Percentage for red danger |
+
+#### Subscription Usage
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `claudeContextBar.showUsage` | `false` | Opt-in: show your Claude subscription usage (the 5-hour session limit from `/usage`) as a separate item. Experimental, may stop working at any time |
 | `claudeContextBar.usageWarningThreshold` | `50` | Usage percentage for yellow warning (independent of context) |
 | `claudeContextBar.usageDangerThreshold` | `75` | Usage percentage for red danger (independent of context) |
 | `claudeContextBar.usageRefreshInterval` | `60` | How often (seconds) to refresh subscription usage from the `/usage` endpoint |
-| `claudeContextBar.refreshInterval` | `30` | Refresh interval in seconds |
+
+#### Behavior
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `claudeContextBar.refreshInterval` | `30` | How often (seconds) to refresh context usage from session files |
 | `claudeContextBar.idleTimeout` | `180` | Seconds of inactivity before hiding a session (3 minutes). Set `0` to never hide idle sessions |
-| `claudeContextBar.compactMode` | `false` | Shorten project names to save status bar space |
-| `claudeContextBar.shortNames` | `{}` | Custom short names for projects (e.g., `{"my-project": "MP"}`) |
 
 ## How It Works
 
