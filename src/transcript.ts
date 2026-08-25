@@ -47,20 +47,28 @@ const FIRST_MESSAGE_LENGTH = 60;
 
 const CLEAR_MARKER = '<command-name>/clear</command-name>';
 
-/** What a Transcript looks like before any line has been read. */
-const NOTHING_PARSED: Transcript = {
-    inputTokens: 0,
-    cacheReadTokens: 0,
-    cacheCreationTokens: 0,
-    totalTokens: 0,
-    model: '',
-    firstMessage: '',
-    sessionCreated: null,
-    wasCleared: false,
-    lineCount: 0,
-    skippedLines: 0,
-    clearIndex: -1,
-};
+/**
+ * What a Transcript looks like when no line yielded anything.
+ *
+ * A fresh object each call, never a shared constant: callers own what they
+ * get back. `lineCount` still reports how much was handed in, so "empty
+ * session" and "unreadable file" stay distinguishable even here.
+ */
+function nothingParsed(lineCount: number): Transcript {
+    return {
+        inputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalTokens: 0,
+        model: '',
+        firstMessage: '',
+        sessionCreated: null,
+        wasCleared: false,
+        lineCount,
+        skippedLines: 0,
+        clearIndex: -1,
+    };
+}
 
 /**
  * Parse JSONL session-record lines into a Transcript.
@@ -81,7 +89,7 @@ export function parseTranscript(lines: readonly string[]): Transcript {
     } catch {
         // The guarantee is unconditional: callers render whatever comes back,
         // so a surprise here has to degrade to "nothing parsed", not throw.
-        return NOTHING_PARSED;
+        return nothingParsed(lines.length);
     }
 }
 
@@ -139,7 +147,13 @@ function parse(lines: readonly string[]): Transcript {
         }
 
         if (!sessionCreated && entry.timestamp) {
-            sessionCreated = new Date(entry.timestamp);
+            // A junk timestamp yields an Invalid Date, which is neither a
+            // usable date nor null and throws from `toISOString()`. Callers
+            // are promised one or the other, so keep null.
+            const parsed = new Date(entry.timestamp);
+            if (!Number.isNaN(parsed.getTime())) {
+                sessionCreated = parsed;
+            }
         }
 
         if (!firstMessage) {

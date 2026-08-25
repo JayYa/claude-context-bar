@@ -369,6 +369,26 @@ describe('parseTranscript — tolerance', () => {
         assert.equal(transcript.totalTokens, 0);
         assert.equal(transcript.firstMessage, '');
     });
+
+    it('leaves the creation time null when a timestamp is unparseable', () => {
+        const transcript = parseTranscript([
+            userLine('hello', { timestamp: 'not a date at all' }),
+            assistantLine({ input_tokens: 10 }),
+        ]);
+
+        // Not an Invalid Date: callers are promised a usable date or null,
+        // and Invalid Date throws from `toISOString()`.
+        assert.equal(transcript.sessionCreated, null);
+    });
+
+    it('falls through a bad timestamp to the next usable one', () => {
+        const transcript = parseTranscript([
+            userLine('hello', { timestamp: 'not a date at all' }),
+            line({ type: 'assistant', timestamp: '2026-07-12T11:00:00.000Z' }),
+        ]);
+
+        assert.deepEqual(transcript.sessionCreated, new Date('2026-07-12T11:00:00.000Z'));
+    });
 });
 
 describe('splitTranscriptLines', () => {
