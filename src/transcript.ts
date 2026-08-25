@@ -213,3 +213,21 @@ function displayableMessage(entry: any): string {
 
     return '';
 }
+
+/**
+ * Split a session file's contents into the lines `parseTranscript` expects.
+ *
+ * The terminating newline is dropped before splitting: it would otherwise
+ * yield a phantom empty last line and inflate `lineCount` by one on every
+ * session file. Every adapter that reads a file needs this, so it lives here
+ * rather than once per adapter.
+ *
+ * @param content  A session file's raw contents
+ * @returns        One entry per line, blank ones included
+ */
+export function splitTranscriptLines(content: string): string[] {
+    if (content === '') {
+        return [];
+    }
+    return content.replace(/\n$/, '').split('\n');
+}

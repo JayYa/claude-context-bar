@@ -5,7 +5,7 @@ import * as os from 'os';
 import { getContextLimitForModel } from './contextLimit';
 import { getContextTokenLevel } from './contextThreshold';
 import { getUsage, UsageData, UsageMeter } from './usage';
-import { parseTranscript } from './transcript';
+import { parseTranscript, splitTranscriptLines } from './transcript';
 
 interface SessionInfo {
     projectName: string;
@@ -356,10 +356,7 @@ async function findActiveSessions(): Promise<SessionInfo[]> {
                 // Catching here keeps the blast radius at this one session.
                 let lines: string[];
                 try {
-                    // Drop the terminating newline before splitting: it would
-                    // otherwise yield a phantom empty last line and inflate the
-                    // transcript's line count by one on every session file.
-                    lines = fs.readFileSync(file.path, 'utf-8').replace(/\n$/, '').split('\n');
+                    lines = splitTranscriptLines(fs.readFileSync(file.path, 'utf-8'));
                 } catch {
                     continue;
                 }

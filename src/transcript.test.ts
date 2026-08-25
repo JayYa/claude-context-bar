@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseTranscript, Transcript } from './transcript';
+import { parseTranscript, splitTranscriptLines, Transcript } from './transcript';
 
 // --- fixtures ---------------------------------------------------------------
 //
@@ -368,5 +368,27 @@ describe('parseTranscript — tolerance', () => {
 
         assert.equal(transcript.totalTokens, 0);
         assert.equal(transcript.firstMessage, '');
+    });
+});
+
+describe('splitTranscriptLines', () => {
+    it('splits content into one line per record', () => {
+        assert.deepEqual(splitTranscriptLines('a\nb\nc'), ['a', 'b', 'c']);
+    });
+
+    it('drops the terminating newline instead of yielding a phantom line', () => {
+        assert.deepEqual(splitTranscriptLines('a\nb\n'), ['a', 'b']);
+    });
+
+    it('drops only the last of several terminating newlines', () => {
+        assert.deepEqual(splitTranscriptLines('a\n\n'), ['a', '']);
+    });
+
+    it('reads empty content as no lines at all', () => {
+        assert.deepEqual(splitTranscriptLines(''), []);
+    });
+
+    it('keeps blank lines in the middle', () => {
+        assert.deepEqual(splitTranscriptLines('a\n\nb'), ['a', '', 'b']);
     });
 });
