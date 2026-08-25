@@ -315,7 +315,7 @@ function getShortName(projectName: string, customNames: Record<string, string>):
     return shortBase + sessionSuffix;
 }
 
-async function getLatestTokenCount(jsonlPath: string): Promise<TokenUsage> {
+export async function getLatestTokenCount(jsonlPath: string): Promise<TokenUsage> {
     return new Promise((resolve) => {
         try {
             const stats = fs.statSync(jsonlPath);
