@@ -48,7 +48,21 @@ after(() => {
     for (const dir of tempDirs) {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+    nodeModule._resolveFilename = originalResolveFilename;
+    delete require.cache['vscode'];
 });
+
+// A session the parser found nothing in: no tokens, no model, no message.
+function assertNothingParsed(tokens: Awaited<ReturnType<typeof getLatestTokenCount>>): void {
+    assert.equal(tokens.inputTokens, 0);
+    assert.equal(tokens.cacheReadTokens, 0);
+    assert.equal(tokens.cacheCreationTokens, 0);
+    assert.equal(tokens.totalTokens, 0);
+    assert.equal(tokens.model, '');
+    assert.equal(tokens.firstMessage, '');
+    assert.equal(tokens.sessionCreated, null);
+    assert.equal(tokens.wasCleared, false);
+}
 
 // Writes a line-array fixture to a JSONL file in a fresh temp dir and returns
 // its path. Every directory created here is removed when the suite ends.
@@ -62,86 +76,75 @@ function writeSession(lines: string[]): string {
 
 // --- tests ------------------------------------------------------------------
 
-describe('getLatestTokenCount: basic parsing', () => {
+describe('getLatestTokenCount — basic parsing', () => {
     it('reports an empty session as all zeros', async () => {
-        const usage = await getLatestTokenCount(writeSession([]));
+        const tokens = await getLatestTokenCount(writeSession([]));
 
-        assert.equal(usage.inputTokens, 0);
-        assert.equal(usage.cacheReadTokens, 0);
-        assert.equal(usage.cacheCreationTokens, 0);
-        assert.equal(usage.totalTokens, 0);
-        assert.equal(usage.model, '');
-        assert.equal(usage.firstMessage, '');
-        assert.equal(usage.sessionCreated, null);
-        assert.equal(usage.wasCleared, false);
+        assertNothingParsed(tokens);
     });
 
     it('reports a blank-lines-only session as all zeros', async () => {
-        const usage = await getLatestTokenCount(writeSession(['', '   ', '\t', '']));
+        const tokens = await getLatestTokenCount(writeSession(['', '   ', '\t', '']));
 
-        assert.equal(usage.totalTokens, 0);
-        assert.equal(usage.model, '');
-        assert.equal(usage.firstMessage, '');
-        assert.equal(usage.sessionCreated, null);
-        assert.equal(usage.wasCleared, false);
+        assertNothingParsed(tokens);
     });
 
     it('takes the last usage record when several are present', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             assistantLine({ input_tokens: 10, cache_read_input_tokens: 20, cache_creation_input_tokens: 30 }),
             assistantLine({ input_tokens: 1, cache_read_input_tokens: 2, cache_creation_input_tokens: 3 }),
         ]));
 
-        assert.equal(usage.inputTokens, 1);
-        assert.equal(usage.cacheReadTokens, 2);
-        assert.equal(usage.cacheCreationTokens, 3);
+        assert.equal(tokens.inputTokens, 1);
+        assert.equal(tokens.cacheReadTokens, 2);
+        assert.equal(tokens.cacheCreationTokens, 3);
     });
 
     it('totals input, cache read and cache creation tokens', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             assistantLine({ input_tokens: 100, cache_read_input_tokens: 2_000, cache_creation_input_tokens: 30_000 }),
         ]));
 
-        assert.equal(usage.totalTokens, 32_100);
+        assert.equal(tokens.totalTokens, 32_100);
     });
 
     it('treats missing usage fields as zero', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             assistantLine({ input_tokens: 100 }),
         ]));
 
-        assert.equal(usage.cacheReadTokens, 0);
-        assert.equal(usage.cacheCreationTokens, 0);
-        assert.equal(usage.totalTokens, 100);
+        assert.equal(tokens.cacheReadTokens, 0);
+        assert.equal(tokens.cacheCreationTokens, 0);
+        assert.equal(tokens.totalTokens, 100);
     });
 
     it('takes the last model id seen', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             assistantLine({ input_tokens: 1 }, 'claude-sonnet-5'),
             assistantLine({ input_tokens: 2 }, 'claude-opus-5'),
         ]));
 
-        assert.equal(usage.model, 'claude-opus-5');
+        assert.equal(tokens.model, 'claude-opus-5');
     });
 
     it('reads usage from a top-level `usage` field', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             line({ type: 'assistant', usage: { input_tokens: 7, cache_read_input_tokens: 8, cache_creation_input_tokens: 9 } }),
         ]));
 
-        assert.equal(usage.totalTokens, 24);
+        assert.equal(tokens.totalTokens, 24);
     });
 
     it('reads usage from a nested `message.usage` field', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             line({ type: 'assistant', message: { usage: { input_tokens: 7, cache_read_input_tokens: 8, cache_creation_input_tokens: 9 } } }),
         ]));
 
-        assert.equal(usage.totalTokens, 24);
+        assert.equal(tokens.totalTokens, 24);
     });
 
     it('prefers `message.usage` over a top-level `usage` on the same entry', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             line({
                 type: 'assistant',
                 usage: { input_tokens: 1 },
@@ -149,44 +152,44 @@ describe('getLatestTokenCount: basic parsing', () => {
             }),
         ]));
 
-        assert.equal(usage.inputTokens, 500);
+        assert.equal(tokens.inputTokens, 500);
     });
 
     it('takes the session creation time from the first timestamped entry', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             userLine('hello', { timestamp: '2026-07-12T10:00:00.000Z' }),
             assistantLine({ input_tokens: 1 }),
             line({ type: 'assistant', timestamp: '2026-07-12T11:00:00.000Z' }),
         ]));
 
-        assert.deepEqual(usage.sessionCreated, new Date('2026-07-12T10:00:00.000Z'));
+        assert.deepEqual(tokens.sessionCreated, new Date('2026-07-12T10:00:00.000Z'));
     });
 });
 
-describe('getLatestTokenCount: /clear semantics', () => {
+describe('getLatestTokenCount — /clear semantics', () => {
     it('is cleared when no user message follows the /clear', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             userLine('hello'),
             assistantLine({ input_tokens: 5_000 }),
             CLEAR_LINE,
         ]));
 
-        assert.equal(usage.wasCleared, true);
+        assert.equal(tokens.wasCleared, true);
     });
 
     it('is not cleared when a user message follows the /clear', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             userLine('hello'),
             assistantLine({ input_tokens: 5_000 }),
             CLEAR_LINE,
             userLine('back again'),
         ]));
 
-        assert.equal(usage.wasCleared, false);
+        assert.equal(tokens.wasCleared, false);
     });
 
     it('counts only what comes after the /clear', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             userLine('before the clear'),
             assistantLine({ input_tokens: 5_000 }, 'claude-sonnet-5'),
             CLEAR_LINE,
@@ -194,25 +197,25 @@ describe('getLatestTokenCount: /clear semantics', () => {
             assistantLine({ input_tokens: 42 }, 'claude-opus-5'),
         ]));
 
-        assert.equal(usage.inputTokens, 42);
-        assert.equal(usage.totalTokens, 42);
-        assert.equal(usage.model, 'claude-opus-5');
-        assert.equal(usage.firstMessage, 'after the clear...');
+        assert.equal(tokens.inputTokens, 42);
+        assert.equal(tokens.totalTokens, 42);
+        assert.equal(tokens.model, 'claude-opus-5');
+        assert.equal(tokens.firstMessage, 'after the clear...');
     });
 
     it('a session with no /clear counts from the top', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             userLine('hello'),
             assistantLine({ input_tokens: 5_000 }),
         ]));
 
-        assert.equal(usage.wasCleared, false);
-        assert.equal(usage.totalTokens, 5_000);
-        assert.equal(usage.firstMessage, 'hello...');
+        assert.equal(tokens.wasCleared, false);
+        assert.equal(tokens.totalTokens, 5_000);
+        assert.equal(tokens.firstMessage, 'hello...');
     });
 
     it('the last /clear wins when there are several', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             userLine('first round'),
             CLEAR_LINE,
             userLine('second round'),
@@ -222,89 +225,100 @@ describe('getLatestTokenCount: /clear semantics', () => {
             assistantLine({ input_tokens: 42 }),
         ]));
 
-        assert.equal(usage.wasCleared, false);
-        assert.equal(usage.totalTokens, 42);
-        assert.equal(usage.firstMessage, 'third round...');
+        assert.equal(tokens.wasCleared, false);
+        assert.equal(tokens.totalTokens, 42);
+        assert.equal(tokens.firstMessage, 'third round...');
     });
 });
 
-describe('getLatestTokenCount: first message', () => {
+describe('getLatestTokenCount — first message', () => {
     it('reads string content', async () => {
-        const usage = await getLatestTokenCount(writeSession([userLine('what does this do?')]));
+        const tokens = await getLatestTokenCount(writeSession([userLine('what does this do?')]));
 
-        assert.equal(usage.firstMessage, 'what does this do?...');
+        assert.equal(tokens.firstMessage, 'what does this do?...');
     });
 
     it('reads the first text block of array content', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             userLine([{ type: 'text', text: 'array content' }, { type: 'text', text: 'ignored' }]),
         ]));
 
-        assert.equal(usage.firstMessage, 'array content...');
+        assert.equal(tokens.firstMessage, 'array content...');
     });
 
     it('skips <command-name> messages', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             userLine('<command-name>/status</command-name>'),
             userLine('the real question'),
         ]));
 
-        assert.equal(usage.firstMessage, 'the real question...');
+        assert.equal(tokens.firstMessage, 'the real question...');
     });
 
     it('skips <local-command- messages', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             userLine('<local-command-stdout>done</local-command-stdout>'),
             userLine('the real question'),
         ]));
 
-        assert.equal(usage.firstMessage, 'the real question...');
+        assert.equal(tokens.firstMessage, 'the real question...');
     });
 
     it('skips Caveat: messages', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             userLine('Caveat: The messages below were generated...'),
             userLine('the real question'),
         ]));
 
-        assert.equal(usage.firstMessage, 'the real question...');
+        assert.equal(tokens.firstMessage, 'the real question...');
+    });
+
+    it('skips a message whose command marker is not at the start', async () => {
+        // The filter is a substring test, not a prefix test: a marker anywhere
+        // in the message suppresses it.
+        const tokens = await getLatestTokenCount(writeSession([
+            userLine('please run <command-name>/status</command-name> for me'),
+            userLine('the real question'),
+        ]));
+
+        assert.equal(tokens.firstMessage, 'the real question...');
     });
 
     it('does not apply the command filter to array content', async () => {
         // Current behaviour: the filter sits on the string branch only, so a
         // command wrapped in array content is displayed verbatim.
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             userLine([{ type: 'text', text: '<command-name>/status</command-name>' }]),
             userLine('the real question'),
         ]));
 
-        assert.equal(usage.firstMessage, '<command-name>/status</command-name>...');
+        assert.equal(tokens.firstMessage, '<command-name>/status</command-name>...');
     });
 
     it('truncates to 60 characters and appends an ellipsis', async () => {
-        const usage = await getLatestTokenCount(writeSession([userLine('a'.repeat(65))]));
+        const tokens = await getLatestTokenCount(writeSession([userLine('a'.repeat(65))]));
 
-        assert.equal(usage.firstMessage, 'a'.repeat(60) + '...');
+        assert.equal(tokens.firstMessage, 'a'.repeat(60) + '...');
     });
 
     it('appends the ellipsis even when nothing was truncated', async () => {
         // Current behaviour: the ellipsis is unconditional, so a short message
         // reads as if it had been cut off.
-        const usage = await getLatestTokenCount(writeSession([userLine('short')]));
+        const tokens = await getLatestTokenCount(writeSession([userLine('short')]));
 
-        assert.equal(usage.firstMessage, 'short...');
+        assert.equal(tokens.firstMessage, 'short...');
     });
 
     it('leaves the first message empty when there is none', async () => {
-        const usage = await getLatestTokenCount(writeSession([assistantLine({ input_tokens: 1 })]));
+        const tokens = await getLatestTokenCount(writeSession([assistantLine({ input_tokens: 1 })]));
 
-        assert.equal(usage.firstMessage, '');
+        assert.equal(tokens.firstMessage, '');
     });
 });
 
-describe('getLatestTokenCount: tolerance', () => {
+describe('getLatestTokenCount — tolerance', () => {
     it('skips corrupt JSON lines and parses the rest', async () => {
-        const usage = await getLatestTokenCount(writeSession([
+        const tokens = await getLatestTokenCount(writeSession([
             '{ this is not json',
             userLine('hello'),
             'half a line',
@@ -312,18 +326,14 @@ describe('getLatestTokenCount: tolerance', () => {
             '',
         ]));
 
-        assert.equal(usage.totalTokens, 60);
-        assert.equal(usage.model, 'claude-opus-5');
-        assert.equal(usage.firstMessage, 'hello...');
+        assert.equal(tokens.totalTokens, 60);
+        assert.equal(tokens.model, 'claude-opus-5');
+        assert.equal(tokens.firstMessage, 'hello...');
     });
 
     it('returns all zeros when the file does not exist', async () => {
-        const usage = await getLatestTokenCount(path.join(os.tmpdir(), 'ccb-does-not-exist.jsonl'));
+        const tokens = await getLatestTokenCount(path.join(os.tmpdir(), 'ccb-does-not-exist.jsonl'));
 
-        assert.equal(usage.totalTokens, 0);
-        assert.equal(usage.model, '');
-        assert.equal(usage.firstMessage, '');
-        assert.equal(usage.sessionCreated, null);
-        assert.equal(usage.wasCleared, false);
+        assertNothingParsed(tokens);
     });
 });
