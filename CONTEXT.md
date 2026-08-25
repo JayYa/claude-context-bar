@@ -32,6 +32,13 @@ Settings that control when the extension acts and when a status bar item appears
 控制扩展何时动作、条目何时出现或消失；与条目长什么样、量什么无关。
 _Avoid_: Advanced, Misc, General, Timing / 高级、杂项、通用、计时
 
+### Session concepts 会话概念
+
+**Transcript（会话记录）**:
+The value parsed out of one Claude Code session file: its token counts, model ID, opening user message, creation time, whether it ends on a `/clear`, and diagnostics about the parse itself (lines read, lines skipped as corrupt, where the `/clear` sat). A Transcript is what one file *says*, plus what reading it cost; it is not the account-level Subscription Usage, and it is not the file itself.
+从单个 Claude Code 会话文件解析出来的值：token 数、模型 ID、首条用户消息、创建时间、是否以 `/clear` 收尾，以及本次解析的诊断信息（读了多少行、跳过多少坏行、`/clear` 在哪一行）。Transcript 是某个文件*说了什么*加上读它的代价，既不是账户级的 Subscription Usage，也不是文件本身。
+_Avoid_: Usage, Session data / 用量、会话数据
+
 ### Related distinctions 易混概念
 
 **Context limit（上下文额度）**:
