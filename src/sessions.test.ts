@@ -61,25 +61,29 @@ describe('selectActiveSessions — superseded by /clear', () => {
         assert.deepEqual(selectActiveSessions([cleared]), []);
     });
 
-    it('keeps a session whose /clear was followed by more work', () => {
-        // A `/clear` mid-conversation is not the end of the session: the
-        // parser only reports `wasCleared` when nothing followed it.
-        const workedOnAfterClearing = session({ cleared: false });
+    it('keeps a session that was not left on a /clear', () => {
+        // Narrow on purpose: all this pins is that `wasCleared: false`
+        // survives selection. The seam sees only that boolean, so "a `/clear`
+        // followed by more work" is indistinguishable here from "no `/clear`
+        // at all". Whether a later user message resets `wasCleared` is the
+        // transcript module's business, covered by `src/transcript.test.ts`
+        // ("is not cleared when a user message follows the /clear").
+        const notCleared = session({ cleared: false });
 
-        assert.deepEqual(names(selectActiveSessions([workedOnAfterClearing])), ['webapp']);
+        assert.deepEqual(names(selectActiveSessions([notCleared])), ['webapp']);
     });
 
-    it('keeps a live sibling when the other session was cleared', () => {
+    it('keeps an Active sibling when the other session was cleared', () => {
         const cleared = session({ created: '2026-01-01T09:00:00Z', cleared: true });
-        const live = session({ created: '2026-01-01T11:00:00Z' });
+        const stillActive = session({ created: '2026-01-01T11:00:00Z' });
 
-        assert.deepEqual(files(selectActiveSessions([cleared, live])), files([live]));
+        assert.deepEqual(files(selectActiveSessions([cleared, stillActive])), files([stillActive]));
     });
 });
 
 describe('selectActiveSessions — superseded by a newer session', () => {
     it('hides a session displaced by one created after its last update', () => {
-        const abandoned = session({
+        const superseded = session({
             created: '2026-01-01T09:00:00Z',
             updated: '2026-01-01T09:30:00Z'
         });
@@ -88,12 +92,12 @@ describe('selectActiveSessions — superseded by a newer session', () => {
             updated: '2026-01-01T12:00:00Z'
         });
 
-        assert.deepEqual(files(selectActiveSessions([abandoned, successor])), files([successor]));
+        assert.deepEqual(files(selectActiveSessions([superseded, successor])), files([successor]));
     });
 
     it('keeps a session whose newer sibling was created before its last update', () => {
         // Both tabs are in use: the user went back to the older session after
-        // starting the newer one, so nothing was abandoned.
+        // starting the newer one, so neither one is Superseded.
         const older = session({
             created: '2026-01-01T09:00:00Z',
             updated: '2026-01-01T12:00:00Z'
@@ -106,7 +110,7 @@ describe('selectActiveSessions — superseded by a newer session', () => {
         assert.equal(selectActiveSessions([older, newer]).length, 2);
     });
 
-    it('keeps two live sessions in one project', () => {
+    it('keeps two Active sessions in one project', () => {
         const first = session({
             created: '2026-01-01T09:00:00Z',
             updated: '2026-01-01T12:00:00Z'
@@ -122,7 +126,7 @@ describe('selectActiveSessions — superseded by a newer session', () => {
     });
 
     it('does not let a session in another project displace this one', () => {
-        const abandonedLooking = session({
+        const supersededLooking = session({
             project: 'webapp',
             created: '2026-01-01T09:00:00Z',
             updated: '2026-01-01T09:30:00Z'
@@ -133,9 +137,9 @@ describe('selectActiveSessions — superseded by a newer session', () => {
             updated: '2026-01-01T12:00:00Z'
         });
 
-        const active = selectActiveSessions([abandonedLooking, elsewhere]);
+        const active = selectActiveSessions([supersededLooking, elsewhere]);
 
-        assert.deepEqual(files(active), files([abandonedLooking, elsewhere]));
+        assert.deepEqual(files(active), files([supersededLooking, elsewhere]));
     });
 });
 
@@ -201,15 +205,23 @@ describe('selectActiveSessions — input handling', () => {
     it('gives the same answer when called twice on the same collection', () => {
         // Numbering returns new session values rather than renaming what it
         // was handed, so a fixture survives being reused across cases.
-        const first = session({ project: 'webapp', created: '2026-01-01T09:00:00Z', updated: '2026-01-01T12:00:00Z' });
-        const second = session({ project: 'webapp', created: '2026-01-01T10:00:00Z', updated: '2026-01-01T12:00:00Z' });
-        const collection = [first, second];
+        //
+        // Three siblings handed over out of creation order is what makes this
+        // bite. An implementation that renamed the caller's objects would
+        // leave them named `webapp`, `webapp-2`, `webapp-3`, so the second
+        // call would group them as three separate one-session projects and
+        // hand back a different answer. Only the return value is inspected;
+        // the input objects are not the contract.
+        const oldest = session({ project: 'webapp', created: '2026-01-01T09:00:00Z', updated: '2026-01-01T12:00:00Z' });
+        const middle = session({ project: 'webapp', created: '2026-01-01T10:00:00Z', updated: '2026-01-01T12:00:00Z' });
+        const newest = session({ project: 'webapp', created: '2026-01-01T11:00:00Z', updated: '2026-01-01T12:00:00Z' });
+        const collection = [newest, oldest, middle];
 
         const once = selectActiveSessions(collection);
         const twice = selectActiveSessions(collection);
 
         assert.deepEqual(twice, once);
-        assert.deepEqual(new Set(names(twice)), new Set(['webapp', 'webapp-2']));
+        assert.deepEqual(names(twice), ['webapp', 'webapp-2', 'webapp-3']);
     });
 });
 
@@ -217,7 +229,7 @@ describe('selectActiveSessions — characterization', () => {
     // CHARACTERIZATION: a session whose creation time did not parse is treated
     // as created at the Unix epoch, which sorts it last within its project and
     // makes it Superseded by any sibling created after its last update. Nobody
-    // chose this; it falls out of a `?? 0` fallback. Recorded here as a known
+    // chose this; it falls out of a `|| 0` fallback. Recorded here as a known
     // quirk, deliberately left unchanged by the extraction.
     // Follow-up: https://github.com/JayYa/claude-context-bar/issues/45
     it('treats a session with no parseable creation time as created at the epoch', () => {
