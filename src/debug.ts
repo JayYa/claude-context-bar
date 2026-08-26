@@ -1,31 +1,25 @@
 /**
- * Debug harness for Claude Context Bar extension
- * 
- * This script replicates the extension's session detection logic and outputs
- * detailed diagnostics to help debug ghost session issues.
- * 
- * Run with: npm run compile && node out/debug.js
+ * Diagnostic harness for the Claude Context Bar extension.
+ *
+ * A second adapter over the session-record parser: it reads the same session
+ * files the extension host reads, hands them to the same `parseTranscript`,
+ * and prints what came back — including the parse diagnostics the status bar
+ * has no room for. Nothing here may import `vscode`: the point of this tool is
+ * that it runs in a plain terminal, outside the editor.
+ *
+ * Run with: npm run compile && node out/debug.js [projectFilter]
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-// ============================================================================
-// TYPES (copied from extension.ts)
-// ============================================================================
+import { parseTranscript, splitTranscriptLines, Transcript } from './transcript';
 
-interface TokenUsage {
-    inputTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-    totalTokens: number;
-    model: string;
-    firstMessage: string;
-    sessionCreated: Date | null;
-    wasCleared: boolean;
-}
-
+/**
+ * What the supersession pass below needs about one session: where it lives,
+ * when it moved, and the few Transcript fields that decide show or hide.
+ */
 interface SessionInfo {
     projectName: string;
     projectPath: string;
@@ -37,111 +31,31 @@ interface SessionInfo {
     wasCleared: boolean;
 }
 
-// ============================================================================
-// LOGIC (copied from extension.ts - keep in sync!)
-// ============================================================================
-
 function getClaudeProjectsDir(): string {
     return path.join(os.homedir(), '.claude', 'projects');
 }
 
-async function getLatestTokenCount(jsonlPath: string): Promise<TokenUsage> {
-    return new Promise((resolve) => {
-        try {
-            const stats = fs.statSync(jsonlPath);
-            if (stats.size === 0) {
-                resolve({ inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0, model: '', firstMessage: '', sessionCreated: null, wasCleared: false });
-                return;
-            }
-
-            const content = fs.readFileSync(jsonlPath, 'utf-8');
-            const lines = content.trim().split('\n');
-
-            let lastClearIndex = -1;
-            let userMessagesAfterClear = 0;
-
-            for (let i = lines.length - 1; i >= 0; i--) {
-                const line = lines[i];
-                if (!line.trim()) continue;
-                try {
-                    const entry = JSON.parse(line);
-                    if (entry.type === 'user' && entry.message?.content) {
-                        const msgContent = entry.message.content;
-                        if (typeof msgContent === 'string' && msgContent.includes('<command-name>/clear</command-name>')) {
-                            lastClearIndex = i;
-                            break;
-                        }
-                        userMessagesAfterClear++;
-                    }
-                } catch (e) {
-                    continue;
-                }
-            }
-
-            const wasCleared = (lastClearIndex !== -1 && userMessagesAfterClear === 0);
-            const startIndex = lastClearIndex >= 0 ? lastClearIndex + 1 : 0;
-
-            let firstMessage = '';
-            let sessionCreated: Date | null = null;
-            let model = '';
-            let finalUsage = { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0 };
-
-            for (let i = startIndex; i < lines.length; i++) {
-                const line = lines[i];
-                if (!line.trim()) continue;
-                try {
-                    const entry = JSON.parse(line);
-                    if (!sessionCreated && entry.timestamp) {
-                        sessionCreated = new Date(entry.timestamp);
-                    }
-                    if (!firstMessage && entry.type === 'user' && entry.message?.content) {
-                        const msgContent = entry.message.content;
-                        if (typeof msgContent === 'string' &&
-                            !msgContent.includes('<command-name>') &&
-                            !msgContent.includes('<local-command-') &&
-                            !msgContent.includes('Caveat:')) {
-                            firstMessage = msgContent.substring(0, 60);
-                        }
-                    }
-                    if (entry.message?.model) {
-                        model = entry.message.model;
-                    }
-                    if (entry.message?.usage || entry.usage) {
-                        const u = entry.message?.usage || entry.usage;
-                        finalUsage = {
-                            inputTokens: u.input_tokens || 0,
-                            cacheReadTokens: u.cache_read_input_tokens || 0,
-                            cacheCreationTokens: u.cache_creation_input_tokens || 0,
-                            totalTokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)
-                        };
-                    }
-                } catch (e) {
-                    continue;
-                }
-            }
-
-            resolve({
-                inputTokens: finalUsage.inputTokens,
-                cacheReadTokens: finalUsage.cacheReadTokens,
-                cacheCreationTokens: finalUsage.cacheCreationTokens,
-                totalTokens: finalUsage.totalTokens,
-                model,
-                firstMessage: firstMessage ? firstMessage + '...' : '',
-                sessionCreated,
-                wasCleared
-            });
-
-        } catch (e) {
-            resolve({ inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0, model: '', firstMessage: '', sessionCreated: null, wasCleared: false });
-        }
-    });
+/**
+ * Read one session file and parse it, exactly as the extension host does.
+ *
+ * A file that cannot be read reports as an empty transcript rather than
+ * throwing: one unreadable session should not end the diagnostic run.
+ */
+function readTranscript(jsonlPath: string): Transcript {
+    let content: string;
+    try {
+        content = fs.readFileSync(jsonlPath, 'utf-8');
+    } catch {
+        content = '';
+    }
+    return parseTranscript(splitTranscriptLines(content));
 }
 
-// ============================================================================
-// DEBUG RUNNER
-// ============================================================================
-
-async function debugSessions(projectFilter?: string) {
+/**
+ * Print every recently-touched session file and how the extension would treat
+ * it, optionally narrowed to project directories containing `projectFilter`.
+ */
+function debugSessions(projectFilter?: string): void {
     const claudeDir = getClaudeProjectsDir();
     console.log(`\n========== CLAUDE CONTEXT BAR DEBUG ==========`);
     console.log(`Time: ${new Date().toISOString()}`);
@@ -183,26 +97,34 @@ async function debugSessions(projectFilter?: string) {
         console.log(`Found ${files.length} active session files\n`);
 
         for (const file of files) {
-            const usage = await getLatestTokenCount(file.path);
+            const transcript = readTranscript(file.path);
 
             console.log(`  📄 ${file.name.substring(0, 8)}...`);
-            console.log(`     Created: ${usage.sessionCreated?.toISOString() || 'unknown'}`);
+            console.log(`     Created: ${transcript.sessionCreated?.toISOString() || 'unknown'}`);
             console.log(`     LastUpd: ${file.mtime.toISOString()}`);
-            console.log(`     Tokens:  ${usage.totalTokens}`);
-            console.log(`     Cleared: ${usage.wasCleared}`);
-            console.log(`     FirstMsg: "${usage.firstMessage}"`);
+            console.log(`     Tokens:  ${transcript.totalTokens}`);
+            console.log(`     Cleared: ${transcript.wasCleared}`);
+            console.log(`     FirstMsg: "${transcript.firstMessage}${transcript.firstMessage ? '...' : ''}"`);
+            console.log(`     Lines:   ${transcript.lineCount} total, ${transcript.skippedLines} skipped as corrupt`);
+            // The first question when a session looks like a ghost: was it cut
+            // off by a /clear, and where? clearIndex is a 0-based index, so it
+            // is printed alongside the 1-based line an editor or sed will show.
+            const clear = transcript.clearIndex === -1
+                ? 'none'
+                : `index ${transcript.clearIndex} (file line ${transcript.clearIndex + 1})`;
+            console.log(`     Clear:   ${clear}`);
             console.log('');
 
-            if (usage.totalTokens > 0) {
+            if (transcript.totalTokens > 0) {
                 allSessions.push({
                     projectName: projectDir,
                     projectPath: projectPath,
                     sessionId: file.name.replace('.jsonl', '').substring(0, 8),
                     sessionFile: file.path,
-                    totalTokens: usage.totalTokens,
+                    totalTokens: transcript.totalTokens,
                     lastUpdated: file.mtime,
-                    sessionCreated: usage.sessionCreated,
-                    wasCleared: usage.wasCleared
+                    sessionCreated: transcript.sessionCreated,
+                    wasCleared: transcript.wasCleared
                 });
             }
         }

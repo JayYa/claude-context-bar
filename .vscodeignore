@@ -54,3 +54,19 @@ out/verify_real_data.js.map
 
 # Source maps (not needed in the published package)
 out/**/*.js.map
+
+# Lockfile (not needed at runtime; deps are bundled/none)
+package-lock.json
+
+# Internal agent + design docs
+docs/
+CONTEXT.md
+
+# Editor/test scratch
+.vscode-test/
+.env
+.env.*
+*.log
+
+# TypeScript incremental build info
+**/*.tsbuildinfo

@@ -2,10 +2,10 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import * as readline from 'readline';
 import { getContextLimitForModel } from './contextLimit';
 import { getContextTokenLevel } from './contextThreshold';
 import { getUsage, UsageData, UsageMeter } from './usage';
+import { parseTranscript, splitTranscriptLines } from './transcript';
 
 interface SessionInfo {
     projectName: string;
@@ -193,17 +193,6 @@ function decodeProjectPath(encodedName: string): { name: string; fullPath: strin
     return { name: projectName, fullPath };
 }
 
-interface TokenUsage {
-    inputTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-    totalTokens: number;
-    model: string;
-    firstMessage: string;
-    sessionCreated: Date | null;
-    wasCleared: boolean;  // True if session ended with /clear command
-}
-
 // Fuzzy emoji matching based on project name
 function getEmojiForProject(projectName: string): string {
     const name = projectName.toLowerCase();
@@ -315,122 +304,6 @@ function getShortName(projectName: string, customNames: Record<string, string>):
     return shortBase + sessionSuffix;
 }
 
-async function getLatestTokenCount(jsonlPath: string): Promise<TokenUsage> {
-    return new Promise((resolve) => {
-        try {
-            const stats = fs.statSync(jsonlPath);
-            if (stats.size === 0) {
-                resolve({ inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0, model: '', firstMessage: '', sessionCreated: null, wasCleared: false });
-                return;
-            }
-
-            // Read the file
-            const content = fs.readFileSync(jsonlPath, 'utf-8');
-            const lines = content.trim().split('\n');
-
-            // Scan backwards to find the last /clear command AND check for user activity after it
-            let lastClearIndex = -1;
-            let userMessagesAfterClear = 0;
-
-            for (let i = lines.length - 1; i >= 0; i--) {
-                const line = lines[i];
-                if (!line.trim()) continue;
-                try {
-                    const entry = JSON.parse(line);
-
-                    // Check for User message
-                    if (entry.type === 'user' && entry.message?.content) {
-                        const msgContent = entry.message.content;
-
-                        // Check for /clear command
-                        if (typeof msgContent === 'string' && msgContent.includes('<command-name>/clear</command-name>')) {
-                            lastClearIndex = i;
-                            break; // Found the latest clear, stop scanning
-                        }
-
-                        // If not clear, it's a user message after the clear point (since we're going backwards)
-                        userMessagesAfterClear++;
-                    }
-                } catch (e) {
-                    continue;
-                }
-            }
-
-            // Determine if session is effectively cleared
-            // It is cleared IF:
-            // 1. We found a /clear command
-            // 2. AND there are NO user messages after it (meaning the user hasn't continued the session yet)
-            const wasCleared = (lastClearIndex !== -1 && userMessagesAfterClear === 0);
-
-            // Calculate usage and finding first message starting from AFTER the clear
-            const startIndex = lastClearIndex >= 0 ? lastClearIndex + 1 : 0;
-
-            let firstMessage = '';
-            let sessionCreated: Date | null = null;
-            let model = '';
-            let finalUsage = { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0 };
-
-            // Forward pass from start index to find metadata and latest usage
-            for (let i = startIndex; i < lines.length; i++) {
-                const line = lines[i];
-                if (!line.trim()) continue;
-                try {
-                    const entry = JSON.parse(line);
-
-                    // Get session creation timestamp (first valid timestamp after clear)
-                    if (!sessionCreated && entry.timestamp) {
-                        sessionCreated = new Date(entry.timestamp);
-                    }
-
-                    // Look for first user message (for display)
-                    if (!firstMessage && entry.type === 'user' && entry.message?.content) {
-                        const msgContent = entry.message.content;
-                        // Skip command-related messages
-                        if (typeof msgContent === 'string' &&
-                            !msgContent.includes('<command-name>') &&
-                            !msgContent.includes('<local-command-') &&
-                            !msgContent.includes('Caveat:')) {
-                            firstMessage = msgContent.substring(0, 60);
-                        } else if (Array.isArray(msgContent) && msgContent[0]?.text) {
-                            firstMessage = msgContent[0].text.substring(0, 60);
-                        }
-                    }
-
-                    // Update latest usage/model as we go (capturing the last valid usage report)
-                    if (entry.message?.model) {
-                        model = entry.message.model;
-                    }
-                    if (entry.message?.usage || entry.usage) {
-                        const u = entry.message?.usage || entry.usage;
-                        finalUsage = {
-                            inputTokens: u.input_tokens || 0,
-                            cacheReadTokens: u.cache_read_input_tokens || 0,
-                            cacheCreationTokens: u.cache_creation_input_tokens || 0,
-                            totalTokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)
-                        };
-                    }
-                } catch (e) {
-                    continue;
-                }
-            }
-
-            resolve({
-                inputTokens: finalUsage.inputTokens,
-                cacheReadTokens: finalUsage.cacheReadTokens,
-                cacheCreationTokens: finalUsage.cacheCreationTokens,
-                totalTokens: finalUsage.totalTokens,
-                model,
-                firstMessage: firstMessage ? firstMessage + '...' : '',
-                sessionCreated,
-                wasCleared
-            });
-
-        } catch (e) {
-            resolve({ inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0, model: '', firstMessage: '', sessionCreated: null, wasCleared: false });
-        }
-    });
-}
-
 async function findActiveSessions(): Promise<SessionInfo[]> {
     const sessions: SessionInfo[] = [];
     const claudeDir = getClaudeProjectsDir();
@@ -477,30 +350,41 @@ async function findActiveSessions(): Promise<SessionInfo[]> {
 
             // Get token count from EACH active session file (1 per Claude Code tab)
             for (const file of files) {
-                const usage = await getLatestTokenCount(file.path);
+                // Read inside its own try/catch: the outer try around the whole
+                // scan would catch a read failure too, but it would also abandon
+                // every project still unvisited, wiping their status bar items.
+                // Catching here keeps the blast radius at this one session.
+                let lines: string[];
+                try {
+                    lines = splitTranscriptLines(fs.readFileSync(file.path, 'utf-8'));
+                } catch {
+                    continue;
+                }
 
-                if (usage.totalTokens > 0) {
+                const transcript = parseTranscript(lines);
+
+                if (transcript.totalTokens > 0) {
                     const { name, fullPath } = decodeProjectPath(projectDir);
                     // Extract short session ID from filename
                     const sessionId = file.name.replace('.jsonl', '').substring(0, 8);
                     // Auto-detect context limit based on model
-                    const sessionContextLimit = getContextLimitForModel(usage.model, contextLimit, modelContextLimits);
+                    const sessionContextLimit = getContextLimitForModel(transcript.model, contextLimit, modelContextLimits);
                     sessions.push({
                         projectName: name,
                         projectPath: fullPath,
                         sessionId,
                         sessionFile: file.path,
-                        inputTokens: usage.inputTokens,
-                        cacheReadTokens: usage.cacheReadTokens,
-                        cacheCreationTokens: usage.cacheCreationTokens,
-                        totalTokens: usage.totalTokens,
-                        percentage: Math.round((usage.totalTokens / sessionContextLimit) * 100),
+                        inputTokens: transcript.inputTokens,
+                        cacheReadTokens: transcript.cacheReadTokens,
+                        cacheCreationTokens: transcript.cacheCreationTokens,
+                        totalTokens: transcript.totalTokens,
+                        percentage: Math.round((transcript.totalTokens / sessionContextLimit) * 100),
                         lastUpdated: file.mtime,
-                        model: usage.model,
+                        model: transcript.model,
                         contextLimit: sessionContextLimit,
-                        firstMessage: usage.firstMessage,
-                        sessionCreated: usage.sessionCreated,
-                        wasCleared: usage.wasCleared
+                        firstMessage: transcript.firstMessage,
+                        sessionCreated: transcript.sessionCreated,
+                        wasCleared: transcript.wasCleared
                     });
                 }
             }
@@ -722,7 +606,8 @@ async function refreshAllSessions() {
         entry.item.color = projectColorMap.get(session.projectName) || '#ffffff';
 
         // Detailed tooltip with full token breakdown and first message
-        const firstMsgLine = session.firstMessage ? `💬 *"${session.firstMessage}"*\n\n` : '';
+        // The parser truncates without an ellipsis; adding it is presentation.
+        const firstMsgLine = session.firstMessage ? `💬 *"${session.firstMessage}..."*\n\n` : '';
         entry.item.tooltip = new vscode.MarkdownString(
             `**${session.projectName}** (${session.sessionId})\n\n` +
             firstMsgLine +
