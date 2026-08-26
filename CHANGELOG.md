@@ -2,7 +2,7 @@
 
 All notable changes to the Claude Context Bar extension will be documented in this file.
 
-## [Unreleased]
+## [1.6.4] - 2026-08-26
 
 ### Changed
 - **Context colors are now based on absolute token counts instead of percentages of the context window.** New settings `warningTokens` (default 120,000) and `dangerTokens` (default 150,000) replace `warningThreshold` and `dangerThreshold`. A percentage is not comparable across models — with windows ranging from 200K (Haiku, legacy) to 1M (current frontier models), the same percentage stands for wildly different amounts of loaded context — and what degrades output quality is the absolute amount loaded. Set either to `0` to disable that color, matching the `idleTimeout: 0` convention.
