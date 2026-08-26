@@ -39,6 +39,16 @@ The value parsed out of one Claude Code session file: its token counts, model ID
 从单个 Claude Code 会话文件解析出来的值：token 数、模型 ID、首条用户消息、创建时间、是否以 `/clear` 收尾，以及本次解析的诊断信息（读了多少行、跳过多少坏行、`/clear` 在哪一行）。Transcript 是某个文件*说了什么*加上读它的代价，既不是账户级的 Subscription Usage，也不是文件本身。
 _Avoid_: Usage, Session data / 用量、会话数据
 
+**Active session（活跃会话）**:
+A session the status bar shows. It has been touched recently enough to still count as in play, it carries tokens, and it has not been superseded. "Active" is a decision about display, not a claim that Claude is running right now.
+状态栏会显示的会话：文件足够新、有 token 数、且没有被顶替。「活跃」是关于是否显示的判断，不代表此刻 Claude 正在运行。
+_Avoid_: Live session, Open session, Current session / 实时会话、打开的会话、当前会话
+
+**Superseded session（被顶替会话）**:
+A session deliberately not shown even though its file is recent. One concept, two grounds: the session ended on a `/clear` with nothing after it, or a newer session in the same project was created after this one's last update — the user moved on. Both mean the same thing to the status bar, so do not name them separately.
+明明文件很新、却被有意不显示的会话。一个概念、两条判据：会话以 `/clear` 收尾且其后再无内容，或同一项目下有更新的会话创建于本会话最后一次更新之后——用户已经走开了。对状态栏而言两者含义相同，不要分别命名。
+_Avoid_: Ghost session, Dead session, Stale session, Abandoned session / 幽灵会话、僵尸会话、过期会话
+
 ### Related distinctions 易混概念
 
 **Context limit（上下文额度）**:
