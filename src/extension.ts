@@ -377,13 +377,13 @@ async function findActiveSessions(): Promise<SessionInfo[]> {
     }
 
     // Which of the scanned sessions to show, and what to call each one.
-    const finalSessions = selectActiveSessions(sessions);
+    const activeSessions = selectActiveSessions(sessions);
 
     // Sort by mtime for display order (most recent first)
-    finalSessions.sort((a, b) => b.lastUpdated.getTime() - a.lastUpdated.getTime());
+    activeSessions.sort((a, b) => b.lastUpdated.getTime() - a.lastUpdated.getTime());
 
     // Filter out manually hidden sessions, but auto-unhide if there's new activity
-    const visibleSessions = finalSessions.filter(session => {
+    const visibleSessions = activeSessions.filter(session => {
         const hiddenAt = hiddenSessions.get(session.sessionFile);
         if (hiddenAt) {
             // Check if session was modified after it was hidden

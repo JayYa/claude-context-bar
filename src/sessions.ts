@@ -37,7 +37,8 @@ export interface SessionInfo {
 /**
  * A session with no parseable creation time counts as created at the Unix
  * epoch. That sorts it last within its project and makes it Superseded by
- * almost any sibling. This is today's behaviour, kept deliberately; see #45.
+ * almost any sibling. It falls out of the `|| 0` fallback below. This is
+ * today's behaviour, kept deliberately; see #45.
  */
 function createdAt(session: SessionInfo): number {
     return session.sessionCreated?.getTime() || 0;
