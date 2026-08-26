@@ -6,24 +6,7 @@ import { getContextLimitForModel } from './contextLimit';
 import { getContextTokenLevel } from './contextThreshold';
 import { getUsage, UsageData, UsageMeter } from './usage';
 import { parseTranscript, splitTranscriptLines } from './transcript';
-
-interface SessionInfo {
-    projectName: string;
-    projectPath: string;
-    sessionId: string;
-    sessionFile: string;
-    inputTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-    totalTokens: number;
-    percentage: number;
-    lastUpdated: Date;
-    model: string;
-    contextLimit: number;
-    firstMessage: string;
-    sessionCreated: Date | null;
-    wasCleared: boolean;
-}
+import { selectActiveSessions, SessionInfo } from './sessions';
 
 interface StatusBarEntry {
     item: vscode.StatusBarItem;
@@ -393,80 +376,8 @@ async function findActiveSessions(): Promise<SessionInfo[]> {
         console.error('Error scanning Claude projects:', e);
     }
 
-    // Group sessions by base project name
-    const projectGroups = new Map<string, SessionInfo[]>();
-    for (const session of sessions) {
-        const base = session.projectName;
-        if (!projectGroups.has(base)) {
-            projectGroups.set(base, []);
-        }
-        projectGroups.get(base)!.push(session);
-    }
-
-    // Process each project group: filter superseded sessions and apply stable numbering
-    const finalSessions: SessionInfo[] = [];
-    for (const [baseName, group] of projectGroups) {
-        // Sort by session CREATION time (newest first) to identify supersession
-        group.sort((a, b) => {
-            const aTime = a.sessionCreated?.getTime() || 0;
-            const bTime = b.sessionCreated?.getTime() || 0;
-            return bTime - aTime;  // Newest first
-        });
-
-        // Filter out superseded sessions
-        // A session is "superseded" if:
-        // 1. A newer session exists that was created AFTER this session's last update
-        //    (meaning the user started a new session after abandoning this one)
-        // 2. OR it has wasCleared=true (ended with /clear, no activity after)
-
-        const activeSessions: SessionInfo[] = [];
-
-        for (let i = 0; i < group.length; i++) {
-            const session = group[i];
-
-            // Check if cleared
-            if (session.wasCleared) {
-                continue; // Skip cleared sessions
-            }
-
-            // Check if superseded by a newer session
-            let isSuperseded = false;
-            for (let j = 0; j < i; j++) {
-                const newerSession = group[j];
-                const newerCreated = newerSession.sessionCreated?.getTime() || 0;
-                const thisLastUpdated = session.lastUpdated.getTime();
-
-                // If a newer session was CREATED after this session's LAST UPDATE,
-                // then this session was abandoned and shouldn't be shown
-                if (newerCreated > thisLastUpdated) {
-                    isSuperseded = true;
-                    break;
-                }
-            }
-
-            if (!isSuperseded) {
-                activeSessions.push(session);
-            }
-        }
-
-        // Re-sort by creation time for stable numbering (oldest first)
-        activeSessions.sort((a, b) => {
-            const aTime = a.sessionCreated?.getTime() || 0;
-            const bTime = b.sessionCreated?.getTime() || 0;
-            return aTime - bTime;
-        });
-
-        // Apply stable numbering
-        for (let i = 0; i < activeSessions.length; i++) {
-            if (i === 0) {
-                activeSessions[i].projectName = baseName;
-            } else {
-                activeSessions[i].projectName = `${baseName}-${i + 1}`;
-            }
-        }
-
-        finalSessions.push(...activeSessions);
-    }
+    // Which of the scanned sessions to show, and what to call each one.
+    const finalSessions = selectActiveSessions(sessions);
 
     // Sort by mtime for display order (most recent first)
     finalSessions.sort((a, b) => b.lastUpdated.getTime() - a.lastUpdated.getTime());
