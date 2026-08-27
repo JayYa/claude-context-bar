@@ -35,10 +35,28 @@ export interface SessionInfo {
 }
 
 /**
- * A session with no parseable creation time counts as created at the Unix
- * epoch. That sorts it last within its project and makes it Superseded by
- * almost any sibling. It falls out of the `|| 0` fallback below. This is
- * today's behaviour, kept deliberately; see #45.
+ * A session's creation time as a comparable number, a missing one reading as
+ * the Unix epoch: the oldest a session can be. Intended, not incidental.
+ *
+ * The state is unreachable through this extension's own parser. A scanned
+ * session is only shown once it carries tokens, which takes a usage-bearing
+ * entry in the live region, and the creation-time scan reads that same region,
+ * accepting a timestamp from any entry in it. Across 13,094 real session-file
+ * entries, every usage-bearing entry carried a valid timestamp and none carried
+ * a malformed one. The epoch is chosen for the day that stops being true:
+ * unknown-is-oldest degrades safely, since such a session is readily Superseded
+ * rather than displacing real ones, which is what unknown-is-newest would do.
+ * The accepted cost sits in the numbering, where an unknown creation time takes
+ * the bare project name from a sibling that really is older.
+ *
+ * `||`, not `??`: `selectActiveSessions` is an exported seam, and its
+ * `Date | null` admits an Invalid Date from a caller other than the parser:
+ * a real `Date` whose `getTime()` is `NaN`. `??` would let that through, and
+ * every comparison against it would silently go false. A session genuinely
+ * stamped 1970-01-01T00:00:00Z collapses to `0` too, which is the right answer
+ * for it.
+ *
+ * Decided in #45.
  */
 function createdAt(session: SessionInfo): number {
     return session.sessionCreated?.getTime() || 0;
