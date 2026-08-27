@@ -225,13 +225,13 @@ describe('selectActiveSessions — input handling', () => {
     });
 });
 
-describe('selectActiveSessions — characterization', () => {
-    // CHARACTERIZATION: a session whose creation time did not parse is treated
-    // as created at the Unix epoch, which sorts it last within its project and
-    // makes it Superseded by any sibling created after its last update. Nobody
-    // chose this; it falls out of a `|| 0` fallback. Recorded here as a known
-    // quirk, deliberately left unchanged by the extraction.
-    // Follow-up: https://github.com/JayYa/claude-context-bar/issues/45
+describe('selectActiveSessions — a session with no creation time', () => {
+    // A session whose creation time did not parse counts as created at the
+    // Unix epoch, so any sibling created after its last update Supersedes it.
+    // Intended: unknown-is-oldest degrades safely if this state ever becomes
+    // reachable, where unknown-is-newest would let such a session displace
+    // real ones for good.
+    // Decided in https://github.com/JayYa/claude-context-bar/issues/45
     it('treats a session with no parseable creation time as created at the epoch', () => {
         const noCreationTime = session({
             project: 'webapp',
@@ -249,10 +249,10 @@ describe('selectActiveSessions — characterization', () => {
         assert.deepEqual(files(active), files([normal]));
     });
 
-    // CHARACTERIZATION: same quirk, seen through the numbering. With nothing
-    // newer to displace it, an epoch-zero session survives, and sorts as the
-    // oldest — so it takes the bare project name from a session that really is
-    // older. See the follow-up above.
+    // The same rule through the numbering, and the cost accepted for it: with
+    // nothing newer to displace it, an epoch-zero session survives and sorts as
+    // the oldest — so it takes the bare project name from a session that really
+    // is older. Decided alongside the rule above.
     it('numbers a session with no parseable creation time as the oldest', () => {
         const noCreationTime = session({
             project: 'webapp',
