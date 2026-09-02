@@ -13,6 +13,7 @@ import {
     readProcessEnv,
     resolveClaudeConfigDir,
 } from './configDir';
+import { readSettings, Settings } from './settings';
 import {
     disambiguateNames,
     formatStatusBarText,
@@ -66,6 +67,16 @@ const BASE_COLOR_VARIATIONS: Record<string, string[]> = {
     'Pink': ['#ffc6ff', '#f5bcf5', '#ebb2eb', '#e1a8e1', '#d79ed7'],
 };
 
+/**
+ * The extension's single point of contact with VS Code's settings: every other
+ * function receives the resulting snapshot as a parameter. Called once per
+ * refresh (and once per config change), never cached in a module-level
+ * variable — a snapshot's life is one refresh.
+ */
+function currentSettings(): Settings {
+    return readSettings(vscode.workspace.getConfiguration('claudeContextBar'));
+}
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('Claude Context Bar is now active');
 
@@ -80,7 +91,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Listen for configuration changes and refresh immediately
     const configWatcher = vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('claudeContextBar')) {
-            ensureFileWatcher();
+            ensureFileWatcher(currentSettings());
             refreshAllSessions();
             refreshUsageData();
         }
@@ -101,11 +112,9 @@ export function activate(context: vscode.ExtensionContext) {
     refreshUsageData();
 
     // Set up periodic refresh
-    const config = vscode.workspace.getConfiguration('claudeContextBar');
-    const intervalSeconds = config.get<number>('refreshInterval', 30);
-    refreshInterval = setInterval(refreshAllSessions, intervalSeconds * 1000);
-    const usageIntervalSeconds = config.get<number>('usageRefreshInterval', 60);
-    usageInterval = setInterval(refreshUsageData, usageIntervalSeconds * 1000);
+    const settings = currentSettings();
+    refreshInterval = setInterval(refreshAllSessions, settings.refreshInterval * 1000);
+    usageInterval = setInterval(refreshUsageData, settings.usageRefreshInterval * 1000);
 
     // Clean up on deactivation
     context.subscriptions.push({
@@ -143,20 +152,16 @@ export function deactivate() {
     missingDirItem = null;
 }
 
-function readConfigDirSetting(): string {
-    return vscode.workspace.getConfiguration('claudeContextBar').get<string>('configDir', '') ?? '';
-}
-
-function getClaudeConfigDir(): string {
+function getClaudeConfigDir(settings: Settings): string {
     return resolveClaudeConfigDir({
-        setting: readConfigDirSetting(),
+        setting: settings.configDir,
         env: readProcessEnv(),
         homedir: os.homedir(),
     });
 }
 
-function getClaudeProjectsDir(): string {
-    return claudeProjectsDir(getClaudeConfigDir());
+function getClaudeProjectsDir(settings: Settings): string {
+    return claudeProjectsDir(getClaudeConfigDir(settings));
 }
 
 function closeFileWatcher() {
@@ -167,8 +172,8 @@ function closeFileWatcher() {
     watchedDir = null;
 }
 
-function ensureFileWatcher() {
-    const dir = getClaudeProjectsDir();
+function ensureFileWatcher(settings: Settings) {
+    const dir = getClaudeProjectsDir(settings);
     if (fileWatcher && watchedDir === dir) {
         return;
     }
@@ -188,9 +193,9 @@ function ensureFileWatcher() {
     }
 }
 
-function updateMissingDirItem() {
-    const projectsDir = getClaudeProjectsDir();
-    const explicit = hasExplicitConfigDir(readConfigDirSetting(), readProcessEnv());
+function updateMissingDirItem(settings: Settings) {
+    const projectsDir = getClaudeProjectsDir(settings);
+    const explicit = hasExplicitConfigDir(settings.configDir, readProcessEnv());
     const missing = !fs.existsSync(projectsDir);
     if (!explicit || !missing) {
         missingDirItem?.dispose();
@@ -376,18 +381,15 @@ function getShortName(projectName: string, customNames: Record<string, string>):
     return shortBase + sessionSuffix;
 }
 
-async function findActiveSessions(): Promise<SessionInfo[]> {
+async function findActiveSessions(settings: Settings): Promise<SessionInfo[]> {
     const sessions: SessionInfo[] = [];
-    const claudeDir = getClaudeProjectsDir();
+    const claudeDir = getClaudeProjectsDir(settings);
 
     if (!fs.existsSync(claudeDir)) {
         return sessions;
     }
 
-    const config = vscode.workspace.getConfiguration('claudeContextBar');
-    const contextLimit = config.get<number>('contextLimit', 200000);
-    const modelContextLimits = config.get<Record<string, number>>('modelContextLimits', {});
-    const idleTimeout = config.get<number>('idleTimeout', 180);
+    const { contextLimit, modelContextLimits, idleTimeout } = settings;
 
     // Only look at sessions modified within the idle timeout (active sessions)
     // idleTimeout of 0 (or negative) disables the timeout: sessions never go stale
@@ -637,25 +639,23 @@ function pruneStaleItems(seenPaths: Set<string>) {
 }
 
 async function refreshAllSessions() {
-    ensureFileWatcher();
-    updateMissingDirItem();
+    const settings = currentSettings();
+    ensureFileWatcher(settings);
+    updateMissingDirItem(settings);
 
-    const sessions = await findActiveSessions();
-    const config = vscode.workspace.getConfiguration('claudeContextBar');
-    const warningTokens = config.get<number>('warningTokens', 120000);
-    const dangerTokens = config.get<number>('dangerTokens', 150000);
+    const sessions = await findActiveSessions(settings);
+    const { warningTokens, dangerTokens, showEmoji } = settings;
     const displayNames = displayNamesForSessions(
         sessions,
-        config.get<StatusBarLabel>('label', 'project'),
-        config.get<boolean>('compactMode', false),
-        config.get<Record<string, string>>('shortNames', {}),
+        settings.label,
+        settings.compactMode,
+        settings.shortNames,
     );
     const colorMap = colorsForDisplayNames(
         displayNames,
-        config.get<boolean>('autoColor', true),
-        config.get<string>('baseColor', 'White'),
+        settings.autoColor,
+        settings.baseColor,
     );
-    const showEmoji = config.get<boolean>('showEmoji', true);
     const seenPaths = new Set<string>();
 
     for (let i = 0; i < sessions.length; i++) {
@@ -673,22 +673,21 @@ async function refreshAllSessions() {
     }
 
     pruneStaleItems(seenPaths);
-    renderUsageItem();
+    renderUsageItem(settings);
 }
 
 // Render the single global usage item (e.g. "✴️ 7%") to the right of the context items.
-function renderUsageItem() {
-    const config = vscode.workspace.getConfiguration('claudeContextBar');
-    const showUsage = config.get<boolean>('showUsage', false);
-
-    if (!showUsage || !usageData?.session) {
+function renderUsageItem(settings: Settings) {
+    // No usage data means nothing to show. `showUsage` is judged once, in
+    // `refreshUsageData`, which clears `usageData` when the setting is off —
+    // so this one condition covers both "switched off" and "not fetched yet".
+    if (!usageData?.session) {
         usageItem?.dispose();
         usageItem = null;
         return;
     }
 
-    const warningThreshold = config.get<number>('usageWarningThreshold', 50);
-    const dangerThreshold = config.get<number>('usageDangerThreshold', 75);
+    const { usageWarningThreshold: warningThreshold, usageDangerThreshold: dangerThreshold } = settings;
 
     if (!usageItem) {
         // Priority just below the context items (which start at 901) so this
@@ -740,12 +739,13 @@ function getClaudeCodeVersion(): string | null {
 }
 
 async function refreshUsageData() {
-    const config = vscode.workspace.getConfiguration('claudeContextBar');
-    const showUsage = config.get<boolean>('showUsage', false);
+    const settings = currentSettings();
 
-    if (!showUsage) {
+    // The one place `showUsage` is judged: it gates both the fetch and, by way
+    // of clearing `usageData`, whether the item is shown at all.
+    if (!settings.showUsage) {
         usageData = null;
-        renderUsageItem();
+        renderUsageItem(settings);
         return;
     }
 
@@ -755,7 +755,7 @@ async function refreshUsageData() {
     }
     usageFetchInFlight = true;
     try {
-        const fetched = await getUsage(getClaudeCodeVersion(), getClaudeConfigDir());
+        const fetched = await getUsage(getClaudeCodeVersion(), getClaudeConfigDir(settings));
         // Keep the last successful value on a transient failure rather than flicker.
         if (fetched) {
             usageData = fetched;
@@ -766,5 +766,5 @@ async function refreshUsageData() {
         usageFetchInFlight = false;
     }
 
-    renderUsageItem();
+    renderUsageItem(settings);
 }
