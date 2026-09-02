@@ -71,7 +71,6 @@ Settings are grouped into four sections, matching the VS Code settings UI.
 | `claudeContextBar.compactMode` | `false` | Shorten project names to save status bar space |
 | `claudeContextBar.shortNames` | `{}` | Custom short names for projects (e.g., `{"my-project": "MP"}`) |
 | `claudeContextBar.label` | `project` | Status bar name: `project` (folder) or `session` (Claude Code title) |
-| `claudeContextBar.usageFormat` | `tokens` | Status bar usage: `tokens` (e.g. `185K`) or `percent`. Colors always use `warningTokens` / `dangerTokens` |
 
 #### Context Window
 
@@ -112,7 +111,7 @@ It resolves the context limit per model using this priority chain:
 
 Claude session files record only the Model ID, with no context-window field, so the limit is inferred from the ID. The default is 1M because current frontier models all ship with a 1M window, which means new models resolve correctly with no update needed. Haiku and legacy models are the 200K exceptions. If any model is ever mis-sized (for example, your plan caps a model lower than its API window), pin an exact value in `modelContextLimits` and it always wins.
 
-Context colors are driven by an absolute token count, not a percentage of the window. With context windows ranging from 200K to 1M, the same percentage stands for very different amounts of loaded context, and what degrades output quality is the absolute amount loaded — so `warningTokens` and `dangerTokens` mean the same thing whatever model a session runs on. The status bar shows that same consumed-token figure by default, so the number on screen is the one that drives the color; set `usageFormat` to `percent` if you prefer the percentage there. The hover tooltip always shows both, plus the resolved window size. Subscription usage thresholds remain percentages, because that endpoint reports only a percentage.
+Context colors are driven by an absolute token count, not a percentage of the window. With context windows ranging from 200K to 1M, the same percentage stands for very different amounts of loaded context, and what degrades output quality is the absolute amount loaded — so `warningTokens` and `dangerTokens` mean the same thing whatever model a session runs on. The status bar shows that same consumed-token figure, so the number on screen is always the one that drives the color. The hover tooltip always shows both, plus the resolved window size. Subscription usage thresholds remain percentages, because that endpoint reports only a percentage.
 
 Sessions inactive for more than 3 minutes (configurable via `idleTimeout`, `0` disables hiding) are automatically hidden, and reappear as soon as a resumed session writes new activity. The window regaining focus also triggers an immediate rescan. The extension also detects when sessions have been superseded by newer ones (e.g., after running `/clear` and opening a new tab), hiding ghost sessions immediately.
 

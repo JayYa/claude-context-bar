@@ -2,6 +2,13 @@
 
 All notable changes to the Claude Context Bar extension will be documented in this file.
 
+## [Unreleased]
+
+### Removed
+- **`claudeContextBar.usageFormat`** — removed one release after it was added. Context Window colors are driven by absolute token counts (`warningTokens` / `dangerTokens`) because a percentage is not comparable across a 200K and a 1M window. With `usageFormat` set to `percent`, the number on the status bar was no longer the quantity that decided its color — yellow could appear next to a percentage that looked small. The status bar number is now always a formatted token count. The `UsageFormat` type and the `formatUsageValue` helper are deleted too, so there is no dormant branch back to the mismatch. The hover tooltip still shows the percentage alongside the absolute count and the resolved window size; there is no color in a tooltip, so the mismatch does not arise there.
+- **`claudeContextBar.warningThreshold`** and **`claudeContextBar.dangerThreshold`** — declarations deleted. Their values have not been read since 1.6.4; they survived only to carry a deprecation notice, and this fork has a single user, so the migration window is over. The stale values are percentages and are simply discarded, not converted into token counts: the current `warningTokens` / `dangerTokens` defaults already express how full a context window has to get before output quality suffers.
+- No retained setting changed its default value or its meaning. Nothing needs re-tuning.
+
 ## [1.7.0] - 2026-09-01
 
 ### Added

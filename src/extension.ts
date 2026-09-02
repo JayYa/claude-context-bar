@@ -17,10 +17,8 @@ import {
     disambiguateNames,
     formatStatusBarText,
     formatTokens,
-    formatUsageValue,
     resolveDisplayName,
     StatusBarLabel,
-    UsageFormat,
 } from './statusBarText';
 
 interface StatusBarEntry {
@@ -594,7 +592,6 @@ function renderSessionItem(
     displayName: string,
     color: string,
     showEmoji: boolean,
-    usageFormat: UsageFormat,
     warningTokens: number,
     dangerTokens: number,
     seenPaths: Set<string>,
@@ -615,7 +612,7 @@ function renderSessionItem(
     entry.item.text = formatStatusBarText(
         icon,
         displayName,
-        formatUsageValue(session.percentage, session.totalTokens, usageFormat),
+        formatTokens(session.totalTokens),
     );
     // Note formatTokens rounds to the nearest K, so a status bar reading
     // tokens can sit half a K either side of the threshold that colours it.
@@ -659,7 +656,6 @@ async function refreshAllSessions() {
         config.get<string>('baseColor', 'White'),
     );
     const showEmoji = config.get<boolean>('showEmoji', true);
-    const usageFormat = config.get<UsageFormat>('usageFormat', 'tokens');
     const seenPaths = new Set<string>();
 
     for (let i = 0; i < sessions.length; i++) {
@@ -670,7 +666,6 @@ async function refreshAllSessions() {
             displayNames[i],
             colorMap.get(displayNames[i]) || '#ffffff',
             showEmoji,
-            usageFormat,
             warningTokens,
             dangerTokens,
             seenPaths,
