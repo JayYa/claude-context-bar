@@ -103,7 +103,7 @@ export const SETTINGS_DEFAULTS: Settings = {
  * by zero and read as `Infinity%`, so a non-positive budget falls back to the
  * default allowance.
  *
- * This is the only validation done here. `warningTokens`, `dangerTokens` and
+ * This is the only numeric validation done here. `warningTokens`, `dangerTokens` and
  * `idleTimeout` all document `0` as "switch this off", an existing meaning
  * that passes through untouched.
  */
@@ -124,36 +124,39 @@ function positiveLimitsOnly(limits: Record<string, number>): Record<string, numb
 
 /** Take one Settings snapshot through the given reader. */
 export function readSettings(reader: SettingsReader): Settings {
-    const d = SETTINGS_DEFAULTS;
+    const defaults = SETTINGS_DEFAULTS;
 
     return {
         // --- Appearance -----------------------------------------------------
-        label: reader.get<StatusBarLabel>('label', d.label),
-        compactMode: reader.get<boolean>('compactMode', d.compactMode),
-        shortNames: reader.get<Record<string, string>>('shortNames', d.shortNames),
-        showEmoji: reader.get<boolean>('showEmoji', d.showEmoji),
-        autoColor: reader.get<boolean>('autoColor', d.autoColor),
-        baseColor: reader.get<string>('baseColor', d.baseColor),
+        label: reader.get<StatusBarLabel>('label', defaults.label),
+        compactMode: reader.get<boolean>('compactMode', defaults.compactMode),
+        shortNames: reader.get<Record<string, string>>('shortNames', defaults.shortNames),
+        showEmoji: reader.get<boolean>('showEmoji', defaults.showEmoji),
+        autoColor: reader.get<boolean>('autoColor', defaults.autoColor),
+        baseColor: reader.get<string>('baseColor', defaults.baseColor),
 
         // --- Context Window -------------------------------------------------
-        contextLimit: budgetOrDefault(reader.get<number>('contextLimit', d.contextLimit), d.contextLimit),
+        contextLimit: budgetOrDefault(reader.get<number>('contextLimit', defaults.contextLimit), defaults.contextLimit),
         modelContextLimits: positiveLimitsOnly(
-            reader.get<Record<string, number>>('modelContextLimits', d.modelContextLimits),
+            reader.get<Record<string, number>>('modelContextLimits', defaults.modelContextLimits),
         ),
-        warningTokens: reader.get<number>('warningTokens', d.warningTokens),
-        dangerTokens: reader.get<number>('dangerTokens', d.dangerTokens),
+        warningTokens: reader.get<number>('warningTokens', defaults.warningTokens),
+        dangerTokens: reader.get<number>('dangerTokens', defaults.dangerTokens),
 
         // --- Subscription Usage ---------------------------------------------
-        showUsage: reader.get<boolean>('showUsage', d.showUsage),
-        usageWarningThreshold: reader.get<number>('usageWarningThreshold', d.usageWarningThreshold),
-        usageDangerThreshold: reader.get<number>('usageDangerThreshold', d.usageDangerThreshold),
-        usageRefreshInterval: reader.get<number>('usageRefreshInterval', d.usageRefreshInterval),
+        showUsage: reader.get<boolean>('showUsage', defaults.showUsage),
+        usageWarningThreshold: reader.get<number>('usageWarningThreshold', defaults.usageWarningThreshold),
+        usageDangerThreshold: reader.get<number>('usageDangerThreshold', defaults.usageDangerThreshold),
+        usageRefreshInterval: reader.get<number>('usageRefreshInterval', defaults.usageRefreshInterval),
 
         // --- Behavior -------------------------------------------------------
-        refreshInterval: reader.get<number>('refreshInterval', d.refreshInterval),
-        idleTimeout: reader.get<number>('idleTimeout', d.idleTimeout),
+        refreshInterval: reader.get<number>('refreshInterval', defaults.refreshInterval),
+        idleTimeout: reader.get<number>('idleTimeout', defaults.idleTimeout),
 
         // --- Data Source ----------------------------------------------------
-        configDir: reader.get<string>('configDir', d.configDir),
+        // A key present but explicitly `null` in settings.json is a value, so
+        // the reader hands it back instead of falling back; the empty string is
+        // what "not configured" means downstream.
+        configDir: reader.get<string>('configDir', defaults.configDir) ?? defaults.configDir,
     };
 }

@@ -201,3 +201,14 @@ describe('readSettings — 0 keeps its documented "off" meaning', () => {
         assert.equal(readSettings(fakeReader({ idleTimeout: 0 })).idleTimeout, 0);
     });
 });
+
+describe('readSettings — an explicitly null value', () => {
+    // A key present in settings.json with a `null` value is a value, not an
+    // absent key, so the reader answers with it instead of the fallback.
+    // `configDir` guards against that: downstream resolution reads the empty
+    // string as "not configured" and falls through to the environment.
+
+    it('turns a null configDir into the empty string', () => {
+        assert.equal(readSettings(fakeReader({ configDir: null })).configDir, '');
+    });
+});
