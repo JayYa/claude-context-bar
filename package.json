@@ -182,11 +182,17 @@
                         "maximum": 9999999,
                         "order": 2,
                         "description": "Seconds of inactivity before hiding a session (default: 180 / 3 minutes). Set 0 to never hide idle sessions. Click to manually hide."
-                    },
+                    }
+                }
+            },
+            {
+                "title": "Data Source",
+                "order": 5,
+                "properties": {
                     "claudeContextBar.configDir": {
                         "type": "string",
                         "default": "",
-                        "order": 3,
+                        "order": 1,
                         "description": "Claude Code config directory — the folder that contains projects/, not projects/ itself. Leave empty to use the CLAUDE_CONFIG_DIR environment variable, then ~/.claude. Set this if VS Code does not inherit your shell environment (common when launched from the Start Menu or Finder)."
                     }
                 }
