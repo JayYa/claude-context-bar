@@ -7,7 +7,7 @@
  * Code itself does on the user's machine:
  *
  *   1. Read the OAuth access token from the OS credential store
- *      (macOS Keychain item "Claude Code-credentials", or ~/.claude/.credentials.json).
+ *      (macOS Keychain item "Claude Code-credentials", or <configDir>/.credentials.json).
  *   2. GET https://api.anthropic.com/api/oauth/usage with that Bearer token.
  *   3. Read `rate_limits.<window>` meters ({ utilization, resets_at }).
  *
@@ -24,6 +24,7 @@ import * as os from 'os';
 import * as https from 'https';
 import * as crypto from 'crypto';
 import { execFile } from 'child_process';
+import { isDefaultClaudeConfigDir, resolveClaudeConfigDir } from './configDir';
 
 export interface UsageMeter {
     key: string;
@@ -78,18 +79,29 @@ function humanizeKey(key: string): string {
  * 8-char config-dir hash suffix appended when a non-default CLAUDE_CONFIG_DIR
  * (or CLAUDE_SECURESTORAGE_CONFIG_DIR) is in use.
  */
-function keychainServiceName(): string {
+function keychainServiceName(resolvedConfigDir?: string): string {
     const secureDir = process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
-    const configDir = process.env.CLAUDE_CONFIG_DIR;
-
-    const isDefault = secureDir !== undefined ? !secureDir : !configDir;
-    if (isDefault) {
-        return 'Claude Code-credentials';
+    if (secureDir !== undefined) {
+        if (!secureDir) {
+            return 'Claude Code-credentials';
+        }
+        const hash = crypto.createHash('sha256').update(secureDir.normalize('NFC')).digest('hex').substring(0, 8);
+        return `Claude Code-credentials-${hash}`;
     }
 
-    const dir = (secureDir !== undefined ? secureDir : configDir || '').normalize('NFC');
-    const hash = crypto.createHash('sha256').update(dir).digest('hex').substring(0, 8);
-    return `Claude Code-credentials-${hash}`;
+    // Hash the same string Claude Code would: the raw env var when present.
+    const envDir = process.env.CLAUDE_CONFIG_DIR;
+    if (envDir) {
+        const hash = crypto.createHash('sha256').update(envDir.normalize('NFC')).digest('hex').substring(0, 8);
+        return `Claude Code-credentials-${hash}`;
+    }
+
+    if (resolvedConfigDir && !isDefaultClaudeConfigDir(resolvedConfigDir)) {
+        const hash = crypto.createHash('sha256').update(resolvedConfigDir.normalize('NFC')).digest('hex').substring(0, 8);
+        return `Claude Code-credentials-${hash}`;
+    }
+
+    return 'Claude Code-credentials';
 }
 
 function keychainAccount(): string {
@@ -110,8 +122,7 @@ function extractAccessToken(raw: string): string | null {
     }
 }
 
-function readTokenFromCredentialsFile(): string | null {
-    const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+function readTokenFromCredentialsFile(configDir: string): string | null {
     const file = path.join(configDir, '.credentials.json');
     try {
         if (!fs.existsSync(file)) {
@@ -123,11 +134,11 @@ function readTokenFromCredentialsFile(): string | null {
     }
 }
 
-function readTokenFromKeychain(): Promise<string | null> {
+function readTokenFromKeychain(configDir?: string): Promise<string | null> {
     return new Promise((resolve) => {
         execFile(
             'security',
-            ['find-generic-password', '-a', keychainAccount(), '-w', '-s', keychainServiceName()],
+            ['find-generic-password', '-a', keychainAccount(), '-w', '-s', keychainServiceName(configDir)],
             { timeout: 5000 },
             (err, stdout) => {
                 if (err || !stdout) {
@@ -144,15 +155,16 @@ function readTokenFromKeychain(): Promise<string | null> {
  * Read the Claude Code OAuth access token from the OS credential store.
  * Returns null if unavailable (not logged in, API-key auth, etc.).
  */
-export async function readOAuthToken(): Promise<string | null> {
+export async function readOAuthToken(configDir?: string): Promise<string | null> {
+    const resolved = configDir || resolveClaudeConfigDir();
     if (process.platform === 'darwin') {
-        const fromKeychain = await readTokenFromKeychain();
+        const fromKeychain = await readTokenFromKeychain(resolved);
         if (fromKeychain) {
             return fromKeychain;
         }
     }
     // Linux/Windows store a plaintext file; also a fallback on macOS.
-    return readTokenFromCredentialsFile();
+    return readTokenFromCredentialsFile(resolved);
 }
 
 /** Pull a 0-100 percentage out of a meter object, tolerating schema variants. */
@@ -330,8 +342,8 @@ export function fetchUsage(token: string, claudeCodeVersion?: string | null): Pr
 }
 
 /** Read the token and fetch usage in one step. Returns null on any failure. */
-export async function getUsage(claudeCodeVersion?: string | null): Promise<UsageData | null> {
-    const token = await readOAuthToken();
+export async function getUsage(claudeCodeVersion?: string | null, configDir?: string): Promise<UsageData | null> {
+    const token = await readOAuthToken(configDir);
     if (!token) {
         return null;
     }

@@ -5,9 +5,27 @@ import * as os from 'os';
 import * as readline from 'readline';
 import { getContextLimitForModel } from './contextLimit';
 import { getUsage, UsageData, UsageMeter } from './usage';
+import {
+    claudeProjectsDir,
+    hasExplicitConfigDir,
+    resolveClaudeConfigDir,
+} from './configDir';
+import {
+    disambiguateNames,
+    formatStatusBarText,
+    formatTokens,
+    formatUsageValue,
+    pickSessionTitle,
+    readTitleFromEntry,
+    resolveDisplayName,
+    StatusBarLabel,
+    UsageFormat,
+} from './statusBarText';
 
 interface SessionInfo {
     projectName: string;
+    baseProjectName: string;
+    sessionTitle: string;
     projectPath: string;
     sessionId: string;
     sessionFile: string;
@@ -33,6 +51,8 @@ const statusBarItems: Map<string, StatusBarEntry> = new Map();
 // Track manually hidden sessions: sessionFile -> timestamp when hidden
 const hiddenSessions: Map<string, number> = new Map();
 let fileWatcher: fs.FSWatcher | null = null;
+let watchedDir: string | null = null;
+let missingDirItem: vscode.StatusBarItem | null = null;
 let refreshInterval: NodeJS.Timeout | null = null;
 
 // Subscription usage shown in a single
@@ -58,6 +78,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Listen for configuration changes and refresh immediately
     const configWatcher = vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('claudeContextBar')) {
+            ensureFileWatcher();
             refreshAllSessions();
             refreshUsageData();
         }
@@ -77,20 +98,6 @@ export function activate(context: vscode.ExtensionContext) {
     refreshAllSessions();
     refreshUsageData();
 
-    // Set up file watcher
-    const claudeProjectsDir = getClaudeProjectsDir();
-    if (fs.existsSync(claudeProjectsDir)) {
-        try {
-            fileWatcher = fs.watch(claudeProjectsDir, { recursive: true }, (event, filename) => {
-                if (filename?.endsWith('.jsonl')) {
-                    refreshAllSessions();
-                }
-            });
-        } catch (e) {
-            console.error('Failed to set up file watcher:', e);
-        }
-    }
-
     // Set up periodic refresh
     const config = vscode.workspace.getConfiguration('claudeContextBar');
     const intervalSeconds = config.get<number>('refreshInterval', 30);
@@ -101,9 +108,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Clean up on deactivation
     context.subscriptions.push({
         dispose: () => {
-            if (fileWatcher) {
-                fileWatcher.close();
-            }
+            closeFileWatcher();
             if (refreshInterval) {
                 clearInterval(refreshInterval);
             }
@@ -114,14 +119,14 @@ export function activate(context: vscode.ExtensionContext) {
             statusBarItems.clear();
             usageItem?.dispose();
             usageItem = null;
+            missingDirItem?.dispose();
+            missingDirItem = null;
         }
     });
 }
 
 export function deactivate() {
-    if (fileWatcher) {
-        fileWatcher.close();
-    }
+    closeFileWatcher();
     if (refreshInterval) {
         clearInterval(refreshInterval);
     }
@@ -132,11 +137,77 @@ export function deactivate() {
     statusBarItems.clear();
     usageItem?.dispose();
     usageItem = null;
+    missingDirItem?.dispose();
+    missingDirItem = null;
+}
+
+function readConfigDirSetting(): string {
+    return vscode.workspace.getConfiguration('claudeContextBar').get<string>('configDir', '') ?? '';
+}
+
+function getClaudeConfigDir(): string {
+    return resolveClaudeConfigDir({
+        setting: readConfigDirSetting(),
+        env: process.env,
+        homedir: os.homedir(),
+    });
 }
 
 function getClaudeProjectsDir(): string {
-    const homeDir = os.homedir();
-    return path.join(homeDir, '.claude', 'projects');
+    return claudeProjectsDir(getClaudeConfigDir());
+}
+
+function closeFileWatcher() {
+    if (fileWatcher) {
+        fileWatcher.close();
+        fileWatcher = null;
+    }
+    watchedDir = null;
+}
+
+function ensureFileWatcher() {
+    const dir = getClaudeProjectsDir();
+    if (fileWatcher && watchedDir === dir) {
+        return;
+    }
+    closeFileWatcher();
+    if (!fs.existsSync(dir)) {
+        return;
+    }
+    try {
+        fileWatcher = fs.watch(dir, { recursive: true }, (_event, filename) => {
+            if (typeof filename === 'string' && filename.endsWith('.jsonl')) {
+                refreshAllSessions();
+            }
+        });
+        watchedDir = dir;
+    } catch (e) {
+        console.error('Failed to set up file watcher:', e);
+    }
+}
+
+function updateMissingDirItem() {
+    const projectsDir = getClaudeProjectsDir();
+    const explicit = hasExplicitConfigDir(readConfigDirSetting(), process.env);
+    const missing = !fs.existsSync(projectsDir);
+    if (!explicit || !missing) {
+        missingDirItem?.dispose();
+        missingDirItem = null;
+        return;
+    }
+    if (!missingDirItem) {
+        missingDirItem = vscode.window.createStatusBarItem(
+            vscode.StatusBarAlignment.Right,
+            STATUS_BAR_PRIORITY_BASE + 10,
+        );
+    }
+    missingDirItem.text = '⚠️ Claude config dir';
+    missingDirItem.tooltip = new vscode.MarkdownString(
+        `Claude Context Bar could not find \`${projectsDir}\`.\n\n` +
+        `Set \`claudeContextBar.configDir\` to your Claude config folder (the one that contains \`projects/\`), ` +
+        `or set the \`CLAUDE_CONFIG_DIR\` environment variable.`
+    );
+    missingDirItem.show();
 }
 
 function decodeProjectPath(encodedName: string): { name: string; fullPath: string } {
@@ -199,9 +270,22 @@ interface TokenUsage {
     totalTokens: number;
     model: string;
     firstMessage: string;
+    sessionTitle: string;
     sessionCreated: Date | null;
     wasCleared: boolean;  // True if session ended with /clear command
 }
+
+const EMPTY_USAGE: TokenUsage = {
+    inputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalTokens: 0,
+    model: '',
+    firstMessage: '',
+    sessionTitle: '',
+    sessionCreated: null,
+    wasCleared: false,
+};
 
 // Fuzzy emoji matching based on project name
 function getEmojiForProject(projectName: string): string {
@@ -319,7 +403,7 @@ async function getLatestTokenCount(jsonlPath: string): Promise<TokenUsage> {
         try {
             const stats = fs.statSync(jsonlPath);
             if (stats.size === 0) {
-                resolve({ inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0, model: '', firstMessage: '', sessionCreated: null, wasCleared: false });
+                resolve({ ...EMPTY_USAGE });
                 return;
             }
 
@@ -367,6 +451,8 @@ async function getLatestTokenCount(jsonlPath: string): Promise<TokenUsage> {
             let firstMessage = '';
             let sessionCreated: Date | null = null;
             let model = '';
+            let customTitle = '';
+            let aiTitle = '';
             let finalUsage = { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0 };
 
             // Forward pass from start index to find metadata and latest usage
@@ -379,6 +465,14 @@ async function getLatestTokenCount(jsonlPath: string): Promise<TokenUsage> {
                     // Get session creation timestamp (first valid timestamp after clear)
                     if (!sessionCreated && entry.timestamp) {
                         sessionCreated = new Date(entry.timestamp);
+                    }
+
+                    const titles = readTitleFromEntry(entry);
+                    if (titles.customTitle) {
+                        customTitle = titles.customTitle;
+                    }
+                    if (titles.aiTitle) {
+                        aiTitle = titles.aiTitle;
                     }
 
                     // Look for first user message (for display)
@@ -420,12 +514,13 @@ async function getLatestTokenCount(jsonlPath: string): Promise<TokenUsage> {
                 totalTokens: finalUsage.totalTokens,
                 model,
                 firstMessage: firstMessage ? firstMessage + '...' : '',
+                sessionTitle: pickSessionTitle(customTitle, aiTitle),
                 sessionCreated,
                 wasCleared
             });
 
         } catch (e) {
-            resolve({ inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalTokens: 0, model: '', firstMessage: '', sessionCreated: null, wasCleared: false });
+            resolve({ ...EMPTY_USAGE });
         }
     });
 }
@@ -486,6 +581,8 @@ async function findActiveSessions(): Promise<SessionInfo[]> {
                     const sessionContextLimit = getContextLimitForModel(usage.model, contextLimit, modelContextLimits);
                     sessions.push({
                         projectName: name,
+                        baseProjectName: name,
+                        sessionTitle: usage.sessionTitle,
                         projectPath: fullPath,
                         sessionId,
                         sessionFile: file.path,
@@ -604,26 +701,32 @@ async function findActiveSessions(): Promise<SessionInfo[]> {
     return visibleSessions.slice(0, 5);
 }
 
-function formatTokens(tokens: number): string {
-    if (tokens >= 1000000) {
-        return (tokens / 1000000).toFixed(1) + 'M';
-    } else if (tokens >= 1000) {
-        return Math.round(tokens / 1000) + 'K';
-    }
-    return tokens.toString();
-}
-
 async function refreshAllSessions() {
+    ensureFileWatcher();
+    updateMissingDirItem();
+
     const sessions = await findActiveSessions();
     const config = vscode.workspace.getConfiguration('claudeContextBar');
     const warningThreshold = config.get<number>('warningThreshold', 50);
     const dangerThreshold = config.get<number>('dangerThreshold', 75);
-    const contextLimit = config.get<number>('contextLimit', 200000);
     const autoColor = config.get<boolean>('autoColor', true);
     const baseColor = config.get<string>('baseColor', 'White');
     const showEmoji = config.get<boolean>('showEmoji', true);
     const compactMode = config.get<boolean>('compactMode', false);
     const shortNames = config.get<Record<string, string>>('shortNames', {});
+    const label = config.get<StatusBarLabel>('label', 'project');
+    const usageFormat = config.get<UsageFormat>('usageFormat', 'percent');
+
+    const displayNames = (() => {
+        const raw = sessions.map(session => resolveDisplayName({
+            label,
+            projectName: session.projectName,
+            baseProjectName: session.baseProjectName,
+            sessionTitle: session.sessionTitle,
+            compactProjectName: compactMode ? getShortName(session.projectName, shortNames) : session.projectName,
+        }));
+        return label === 'session' ? disambiguateNames(raw) : raw;
+    })();
 
     // Pastel color palette for auto-coloring
     const pastelPalette = [
@@ -656,18 +759,18 @@ async function refreshAllSessions() {
 
     if (autoColor) {
         // Auto mode: use pastel palette
-        for (const session of sessions) {
-            if (!projectColorMap.has(session.projectName)) {
-                projectColorMap.set(session.projectName, pastelPalette[colorIndex % pastelPalette.length]);
+        for (const name of displayNames) {
+            if (!projectColorMap.has(name)) {
+                projectColorMap.set(name, pastelPalette[colorIndex % pastelPalette.length]);
                 colorIndex++;
             }
         }
     } else {
         // Manual mode: use variations of the base color
         const variations = baseColorVariations[baseColor] || baseColorVariations['White'];
-        for (const session of sessions) {
-            if (!projectColorMap.has(session.projectName)) {
-                projectColorMap.set(session.projectName, variations[colorIndex % variations.length]);
+        for (const name of displayNames) {
+            if (!projectColorMap.has(name)) {
+                projectColorMap.set(name, variations[colorIndex % variations.length]);
                 colorIndex++;
             }
         }
@@ -698,10 +801,10 @@ async function refreshAllSessions() {
         }
 
         // Update the status bar item with fuzzy emoji matching
-        const icon = showEmoji ? getEmojiForProject(session.projectName) : '';
-        const iconSpace = showEmoji ? ' ' : '';
-        const displayName = compactMode ? getShortName(session.projectName, shortNames) : session.projectName;
-        entry.item.text = `${icon}${iconSpace}${displayName}: ${session.percentage}%`;
+        const icon = showEmoji ? getEmojiForProject(session.baseProjectName) : '';
+        const displayName = displayNames[i];
+        const usageValue = formatUsageValue(session.percentage, session.totalTokens, usageFormat);
+        entry.item.text = formatStatusBarText(icon, displayName, usageValue);
 
         // Set background color based on thresholds
         if (session.percentage >= dangerThreshold) {
@@ -713,16 +816,18 @@ async function refreshAllSessions() {
         }
 
         // Set text color from project color map
-        entry.item.color = projectColorMap.get(session.projectName) || '#ffffff';
+        entry.item.color = projectColorMap.get(displayName) || '#ffffff';
 
-        // Detailed tooltip with full token breakdown and first message
+        // Detailed tooltip with session title, token breakdown, and first message
+        const titleLine = session.sessionTitle ? `🏷️ **${session.sessionTitle}**\n\n` : '';
         const firstMsgLine = session.firstMessage ? `💬 *"${session.firstMessage}"*\n\n` : '';
         entry.item.tooltip = new vscode.MarkdownString(
             `**${session.projectName}** (${session.sessionId})\n\n` +
+            titleLine +
             firstMsgLine +
             `📁 \`${session.projectPath}\`\n\n` +
             `🤖 Model: \`${session.model || 'Unknown'}\`\n\n` +
-            `📊 **Context Usage: ${session.percentage}%**\n\n` +
+            `📊 **Context Usage: ${session.percentage}%** (${formatTokens(session.totalTokens)})\n\n` +
             `| Type | Tokens |\n|------|--------|\n` +
             `| Cache Read | ${formatTokens(session.cacheReadTokens)} |\n` +
             `| Cache Creation | ${formatTokens(session.cacheCreationTokens)} |\n` +
@@ -839,7 +944,7 @@ async function refreshUsageData() {
     }
     usageFetchInFlight = true;
     try {
-        const fetched = await getUsage(getClaudeCodeVersion());
+        const fetched = await getUsage(getClaudeCodeVersion(), getClaudeConfigDir());
         // Keep the last successful value on a transient failure rather than flicker.
         if (fetched) {
             usageData = fetched;

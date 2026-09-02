@@ -9,7 +9,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { claudeProjectsDir, resolveClaudeConfigDir } from './configDir';
 
 // ============================================================================
 // TYPES (copied from extension.ts)
@@ -42,7 +42,7 @@ interface SessionInfo {
 // ============================================================================
 
 function getClaudeProjectsDir(): string {
-    return path.join(os.homedir(), '.claude', 'projects');
+    return claudeProjectsDir(resolveClaudeConfigDir());
 }
 
 async function getLatestTokenCount(jsonlPath: string): Promise<TokenUsage> {
