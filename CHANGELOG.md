@@ -4,6 +4,8 @@ All notable changes to the Claude Context Bar extension will be documented in th
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-09-02
+
 A settings reorganisation only: no retained setting changed its default value or its meaning, so nothing needs re-tuning.
 
 ### Changed
