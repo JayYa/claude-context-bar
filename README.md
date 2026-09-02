@@ -4,11 +4,11 @@
 
 ## Features
 
-🧠 **Live Context Tracking** — See your Claude Code context usage in the status bar (percent by default, optional absolute tokens)
+🧠 **Live Context Tracking** — See your Claude Code context usage right in the status bar
 
 ⚡ **Per-Tab Monitoring** — Each Claude Code tab gets its own context indicator
 
-🏷️ **Session titles** — Hover shows the Claude Code session name (`/rename` or the generated summary). Optionally use it on the status bar instead of the project folder name
+🏷️ **Session Titles** — Hover shows the Claude Code session name. Optionally use it on the status bar when several tabs share a project
 
 🎯 **Fuzzy Emoji Matching** — Icons automatically match your project type based on name keywords:
 - 🎵 Music/audio projects
@@ -44,8 +44,9 @@
 
 📐 **Compact Mode** — Shorten project names to save space (my-cool-project → MCP, typescript → Tscript)
 
-✴️ **Subscription Usage** — Opt-in (off by default): see your Claude `/usage` Session (5-hour) limit as its own status bar item (e.g. `✴️ 7%`), with color-coded warnings independent of the context colors. Hover for the full breakdown (Weekly, and per-model limits like Weekly Fable) with reset times. Experimental, may stop working at any time (see [Subscription usage](#subscription-usage))
+💯 **Token Display** — Optionally show absolute tokens on the status bar (185K) instead of percent (18%)
 
+✴️ **Subscription Usage** — Opt-in (off by default): see your Claude `/usage` Session (5-hour) limit as its own status bar item (e.g. `✴️ 7%`), with color-coded warnings independent of the context colors. Hover for the full breakdown (Weekly, and per-model limits like Weekly Fable) with reset times. Experimental, may stop working at any time (see [Subscription usage](#subscription-usage))
 
 ## Requirements
 
