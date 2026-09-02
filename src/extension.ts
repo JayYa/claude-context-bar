@@ -8,6 +8,7 @@ import { getUsage, UsageData, UsageMeter } from './usage';
 import {
     claudeProjectsDir,
     hasExplicitConfigDir,
+    readProcessEnv,
     resolveClaudeConfigDir,
 } from './configDir';
 import {
@@ -63,6 +64,29 @@ let usageInterval: NodeJS.Timeout | null = null;
 
 const STATUS_BAR_PRIORITY_BASE = 900;
 const ITEM_CLAUDE_ICON = '✴️';
+
+const PASTEL_PALETTE = [
+    '#a8d8ea',
+    '#d4a5a5',
+    '#b5d8c7',
+    '#e8d5b7',
+    '#c9b1ff',
+    '#ffd6a5',
+    '#caffbf',
+    '#bdb2ff',
+    '#ffc6ff',
+];
+
+const BASE_COLOR_VARIATIONS: Record<string, string[]> = {
+    'White': ['#ffffff', '#f5f5f5', '#ebebeb', '#e0e0e0', '#d5d5d5'],
+    'Blue': ['#a8d8ea', '#9ecfe0', '#94c6d6', '#8abccc', '#80b2c2'],
+    'Purple': ['#c9b1ff', '#bfa7f5', '#b59deb', '#ab93e1', '#a189d7'],
+    'Cyan': ['#a0e7e5', '#96ddd9', '#8cd3cd', '#82c9c1', '#78bfb5'],
+    'Green': ['#b5d8c7', '#abcebd', '#a1c4b3', '#97baa9', '#8db09f'],
+    'Yellow': ['#ffeaa7', '#f5e09d', '#ebd693', '#e1cc89', '#d7c27f'],
+    'Orange': ['#ffd6a5', '#f5cc9b', '#ebc291', '#e1b887', '#d7ae7d'],
+    'Pink': ['#ffc6ff', '#f5bcf5', '#ebb2eb', '#e1a8e1', '#d79ed7'],
+};
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Claude Context Bar is now active');
@@ -148,7 +172,7 @@ function readConfigDirSetting(): string {
 function getClaudeConfigDir(): string {
     return resolveClaudeConfigDir({
         setting: readConfigDirSetting(),
-        env: process.env,
+        env: readProcessEnv(),
         homedir: os.homedir(),
     });
 }
@@ -175,7 +199,7 @@ function ensureFileWatcher() {
         return;
     }
     try {
-        fileWatcher = fs.watch(dir, { recursive: true }, (_event, filename) => {
+        fileWatcher = fs.watch(dir, { recursive: true }, (_event: string, filename: unknown) => {
             if (typeof filename === 'string' && filename.endsWith('.jsonl')) {
                 refreshAllSessions();
             }
@@ -188,7 +212,7 @@ function ensureFileWatcher() {
 
 function updateMissingDirItem() {
     const projectsDir = getClaudeProjectsDir();
-    const explicit = hasExplicitConfigDir(readConfigDirSetting(), process.env);
+    const explicit = hasExplicitConfigDir(readConfigDirSetting(), readProcessEnv());
     const missing = !fs.existsSync(projectsDir);
     if (!explicit || !missing) {
         missingDirItem?.dispose();
@@ -701,6 +725,122 @@ async function findActiveSessions(): Promise<SessionInfo[]> {
     return visibleSessions.slice(0, 5);
 }
 
+function displayNamesForSessions(
+    sessions: SessionInfo[],
+    label: StatusBarLabel,
+    compactMode: boolean,
+    shortNames: Record<string, string>,
+): string[] {
+    const raw = sessions.map(session => resolveDisplayName({
+        label,
+        projectName: session.projectName,
+        baseProjectName: session.baseProjectName,
+        sessionTitle: session.sessionTitle,
+        compactProjectName: compactMode ? getShortName(session.projectName, shortNames) : session.projectName,
+    }));
+    if (label === 'session') {
+        return disambiguateNames(raw);
+    }
+    return raw;
+}
+
+function colorsForDisplayNames(names: string[], autoColor: boolean, baseColor: string): Map<string, string> {
+    const palette = autoColor ? PASTEL_PALETTE : (BASE_COLOR_VARIATIONS[baseColor] || BASE_COLOR_VARIATIONS['White']);
+    const map = new Map<string, string>();
+    let colorIndex = 0;
+    for (const name of names) {
+        if (!map.has(name)) {
+            map.set(name, palette[colorIndex % palette.length]);
+            colorIndex++;
+        }
+    }
+    return map;
+}
+
+function applyUsageBackground(
+    item: vscode.StatusBarItem,
+    percentage: number,
+    warningThreshold: number,
+    dangerThreshold: number,
+) {
+    if (percentage >= dangerThreshold) {
+        item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    } else if (percentage >= warningThreshold) {
+        item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    } else {
+        item.backgroundColor = undefined;
+    }
+}
+
+function buildSessionTooltip(session: SessionInfo): vscode.MarkdownString {
+    const titleLine = session.sessionTitle ? `🏷️ **${session.sessionTitle}**\n\n` : '';
+    const firstMsgLine = session.firstMessage ? `💬 *"${session.firstMessage}"*\n\n` : '';
+    return new vscode.MarkdownString(
+        `**${session.projectName}** (${session.sessionId})\n\n` +
+        titleLine +
+        firstMsgLine +
+        `📁 \`${session.projectPath}\`\n\n` +
+        `🤖 Model: \`${session.model || 'Unknown'}\`\n\n` +
+        `📊 **Context Usage: ${session.percentage}%** (${formatTokens(session.totalTokens)})\n\n` +
+        `| Type | Tokens |\n|------|--------|\n` +
+        `| Cache Read | ${formatTokens(session.cacheReadTokens)} |\n` +
+        `| Cache Creation | ${formatTokens(session.cacheCreationTokens)} |\n` +
+        `| **Total** | **${formatTokens(session.totalTokens)}** / ${formatTokens(session.contextLimit)} |\n\n` +
+        `🕐 Last updated: ${session.lastUpdated.toLocaleTimeString()}\n\n` +
+        `*Click to hide*`
+    );
+}
+
+function renderSessionItem(
+    session: SessionInfo,
+    index: number,
+    sessionCount: number,
+    displayName: string,
+    color: string,
+    showEmoji: boolean,
+    usageFormat: UsageFormat,
+    warningThreshold: number,
+    dangerThreshold: number,
+    seenPaths: Set<string>,
+) {
+    seenPaths.add(session.sessionFile);
+    let entry = statusBarItems.get(session.sessionFile);
+    if (!entry) {
+        const priority = STATUS_BAR_PRIORITY_BASE + (sessionCount - index);
+        const item = vscode.window.createStatusBarItem(
+            vscode.StatusBarAlignment.Right,
+            priority
+        );
+        entry = { item, sessionFile: session.sessionFile };
+        statusBarItems.set(session.sessionFile, entry);
+    }
+
+    const icon = showEmoji ? getEmojiForProject(session.baseProjectName) : '';
+    entry.item.text = formatStatusBarText(
+        icon,
+        displayName,
+        formatUsageValue(session.percentage, session.totalTokens, usageFormat),
+    );
+    applyUsageBackground(entry.item, session.percentage, warningThreshold, dangerThreshold);
+    entry.item.color = color;
+    entry.item.tooltip = buildSessionTooltip(session);
+    entry.item.command = {
+        command: 'claudeContextBar.hideSession',
+        title: 'Hide Session',
+        arguments: [session.sessionFile]
+    };
+    entry.item.show();
+}
+
+function pruneStaleItems(seenPaths: Set<string>) {
+    for (const [sessionFile, entry] of statusBarItems) {
+        if (!seenPaths.has(sessionFile)) {
+            entry.item.dispose();
+            statusBarItems.delete(sessionFile);
+        }
+    }
+}
+
 async function refreshAllSessions() {
     ensureFileWatcher();
     updateMissingDirItem();
@@ -709,152 +849,37 @@ async function refreshAllSessions() {
     const config = vscode.workspace.getConfiguration('claudeContextBar');
     const warningThreshold = config.get<number>('warningThreshold', 50);
     const dangerThreshold = config.get<number>('dangerThreshold', 75);
-    const autoColor = config.get<boolean>('autoColor', true);
-    const baseColor = config.get<string>('baseColor', 'White');
+    const displayNames = displayNamesForSessions(
+        sessions,
+        config.get<StatusBarLabel>('label', 'project'),
+        config.get<boolean>('compactMode', false),
+        config.get<Record<string, string>>('shortNames', {}),
+    );
+    const colorMap = colorsForDisplayNames(
+        displayNames,
+        config.get<boolean>('autoColor', true),
+        config.get<string>('baseColor', 'White'),
+    );
     const showEmoji = config.get<boolean>('showEmoji', true);
-    const compactMode = config.get<boolean>('compactMode', false);
-    const shortNames = config.get<Record<string, string>>('shortNames', {});
-    const label = config.get<StatusBarLabel>('label', 'project');
     const usageFormat = config.get<UsageFormat>('usageFormat', 'percent');
-
-    const displayNames = (() => {
-        const raw = sessions.map(session => resolveDisplayName({
-            label,
-            projectName: session.projectName,
-            baseProjectName: session.baseProjectName,
-            sessionTitle: session.sessionTitle,
-            compactProjectName: compactMode ? getShortName(session.projectName, shortNames) : session.projectName,
-        }));
-        return label === 'session' ? disambiguateNames(raw) : raw;
-    })();
-
-    // Pastel color palette for auto-coloring
-    const pastelPalette = [
-        '#a8d8ea', // Soft blue
-        '#d4a5a5', // Dusty rose
-        '#b5d8c7', // Sage green
-        '#e8d5b7', // Warm beige
-        '#c9b1ff', // Lavender
-        '#ffd6a5', // Peach
-        '#caffbf', // Mint
-        '#bdb2ff', // Periwinkle
-        '#ffc6ff', // Pink
-    ];
-
-    // Base color variations (subtle shifts from user's chosen color)
-    const baseColorVariations: Record<string, string[]> = {
-        'White': ['#ffffff', '#f5f5f5', '#ebebeb', '#e0e0e0', '#d5d5d5'],
-        'Blue': ['#a8d8ea', '#9ecfe0', '#94c6d6', '#8abccc', '#80b2c2'],
-        'Purple': ['#c9b1ff', '#bfa7f5', '#b59deb', '#ab93e1', '#a189d7'],
-        'Cyan': ['#a0e7e5', '#96ddd9', '#8cd3cd', '#82c9c1', '#78bfb5'],
-        'Green': ['#b5d8c7', '#abcebd', '#a1c4b3', '#97baa9', '#8db09f'],
-        'Yellow': ['#ffeaa7', '#f5e09d', '#ebd693', '#e1cc89', '#d7c27f'],
-        'Orange': ['#ffd6a5', '#f5cc9b', '#ebc291', '#e1b887', '#d7ae7d'],
-        'Pink': ['#ffc6ff', '#f5bcf5', '#ebb2eb', '#e1a8e1', '#d79ed7'],
-    };
-
-    // Track project names to assign consistent colors
-    const projectColorMap = new Map<string, string>();
-    let colorIndex = 0;
-
-    if (autoColor) {
-        // Auto mode: use pastel palette
-        for (const name of displayNames) {
-            if (!projectColorMap.has(name)) {
-                projectColorMap.set(name, pastelPalette[colorIndex % pastelPalette.length]);
-                colorIndex++;
-            }
-        }
-    } else {
-        // Manual mode: use variations of the base color
-        const variations = baseColorVariations[baseColor] || baseColorVariations['White'];
-        for (const name of displayNames) {
-            if (!projectColorMap.has(name)) {
-                projectColorMap.set(name, variations[colorIndex % variations.length]);
-                colorIndex++;
-            }
-        }
-    }
-
-    // Track which sessions we've seen
     const seenPaths = new Set<string>();
 
-    // Sessions are sorted newest-first, so reverse for oldest-left display
-    // For Left alignment: higher priority = further left
     for (let i = 0; i < sessions.length; i++) {
-        const session = sessions[i];
-        seenPaths.add(session.sessionFile);
-
-        let entry = statusBarItems.get(session.sessionFile);
-
-        if (!entry) {
-            // Create new status bar item - Right align, very high priority to appear LEFT of Claude's items
-            // Higher priority = further left on right-aligned items. Context items stack
-            // above the usage item (STATUS_BAR_PRIORITY_BASE), so they sit to its left.
-            const priority = STATUS_BAR_PRIORITY_BASE + (sessions.length - i);
-            const item = vscode.window.createStatusBarItem(
-                vscode.StatusBarAlignment.Right,
-                priority
-            );
-            entry = { item, sessionFile: session.sessionFile };
-            statusBarItems.set(session.sessionFile, entry);
-        }
-
-        // Update the status bar item with fuzzy emoji matching
-        const icon = showEmoji ? getEmojiForProject(session.baseProjectName) : '';
-        const displayName = displayNames[i];
-        const usageValue = formatUsageValue(session.percentage, session.totalTokens, usageFormat);
-        entry.item.text = formatStatusBarText(icon, displayName, usageValue);
-
-        // Set background color based on thresholds
-        if (session.percentage >= dangerThreshold) {
-            entry.item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-        } else if (session.percentage >= warningThreshold) {
-            entry.item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-        } else {
-            entry.item.backgroundColor = undefined;
-        }
-
-        // Set text color from project color map
-        entry.item.color = projectColorMap.get(displayName) || '#ffffff';
-
-        // Detailed tooltip with session title, token breakdown, and first message
-        const titleLine = session.sessionTitle ? `🏷️ **${session.sessionTitle}**\n\n` : '';
-        const firstMsgLine = session.firstMessage ? `💬 *"${session.firstMessage}"*\n\n` : '';
-        entry.item.tooltip = new vscode.MarkdownString(
-            `**${session.projectName}** (${session.sessionId})\n\n` +
-            titleLine +
-            firstMsgLine +
-            `📁 \`${session.projectPath}\`\n\n` +
-            `🤖 Model: \`${session.model || 'Unknown'}\`\n\n` +
-            `📊 **Context Usage: ${session.percentage}%** (${formatTokens(session.totalTokens)})\n\n` +
-            `| Type | Tokens |\n|------|--------|\n` +
-            `| Cache Read | ${formatTokens(session.cacheReadTokens)} |\n` +
-            `| Cache Creation | ${formatTokens(session.cacheCreationTokens)} |\n` +
-            `| **Total** | **${formatTokens(session.totalTokens)}** / ${formatTokens(session.contextLimit)} |\n\n` +
-            `🕐 Last updated: ${session.lastUpdated.toLocaleTimeString()}\n\n` +
-            `*Click to hide*`
+        renderSessionItem(
+            sessions[i],
+            i,
+            sessions.length,
+            displayNames[i],
+            colorMap.get(displayNames[i]) || '#ffffff',
+            showEmoji,
+            usageFormat,
+            warningThreshold,
+            dangerThreshold,
+            seenPaths,
         );
-
-        // Click to hide this session
-        entry.item.command = {
-            command: 'claudeContextBar.hideSession',
-            title: 'Hide Session',
-            arguments: [session.sessionFile]
-        };
-
-        entry.item.show();
     }
 
-    // Remove status bar items for sessions that are no longer active
-    for (const [sessionFile, entry] of statusBarItems) {
-        if (!seenPaths.has(sessionFile)) {
-            entry.item.dispose();
-            statusBarItems.delete(sessionFile);
-        }
-    }
-
-    // Render the usage item to the right of the context items.
+    pruneStaleItems(seenPaths);
     renderUsageItem();
 }
 
@@ -880,14 +905,7 @@ function renderUsageItem() {
 
     const session = usageData.session;
     usageItem.text = `${ITEM_CLAUDE_ICON} ${session.percentage}%`;
-
-    if (session.percentage >= dangerThreshold) {
-        usageItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-    } else if (session.percentage >= warningThreshold) {
-        usageItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    } else {
-        usageItem.backgroundColor = undefined;
-    }
+    applyUsageBackground(usageItem, session.percentage, warningThreshold, dangerThreshold);
 
     usageItem.tooltip = buildUsageTooltip(usageData);
     usageItem.show();

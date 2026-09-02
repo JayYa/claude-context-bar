@@ -9,14 +9,38 @@
  *
  * The setting and env var name the config directory itself (the folder that
  * contains `projects/`), not the projects folder.
+ *
+ * Pure string helpers — callers inject env and homedir so this module type-checks
+ * without Node's type packages (EZ-Verify's trusted tsc uses `"types": []`).
  */
-import * as os from 'os';
-import * as path from 'path';
+
+export type EnvMap = Record<string, string | undefined>;
 
 export interface ResolveClaudeConfigDirOptions {
     setting?: string;
-    env?: NodeJS.ProcessEnv;
-    homedir?: string;
+    env?: EnvMap;
+    homedir: string;
+}
+
+/** Read process.env without naming the Node `process` global. */
+export function readProcessEnv(): EnvMap {
+    const g = globalThis as unknown as { process?: { env?: EnvMap } };
+    return g.process?.env ?? {};
+}
+
+export function defaultHomedir(env: EnvMap = readProcessEnv()): string {
+    return (env.USERPROFILE || env.HOME || '').trim();
+}
+
+function join2(base: string, child: string): string {
+    const sep = base.includes('\\') ? '\\' : '/';
+    const trimmed = base.replace(/[\\/]+$/, '');
+    const rest = child.replace(/^[\\/]+/, '');
+    return trimmed + sep + rest;
+}
+
+function normalizePath(p: string): string {
+    return p.replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
 }
 
 export function expandHome(p: string, homedir: string): string {
@@ -24,34 +48,33 @@ export function expandHome(p: string, homedir: string): string {
         return homedir;
     }
     if (p.startsWith('~/') || p.startsWith('~\\')) {
-        return path.join(homedir, p.slice(2));
+        return join2(homedir, p.slice(2));
     }
     return p;
 }
 
-export function resolveClaudeConfigDir(options: ResolveClaudeConfigDirOptions = {}): string {
-    const homedir = options.homedir ?? os.homedir();
+export function resolveClaudeConfigDir(options: ResolveClaudeConfigDirOptions): string {
     const setting = (options.setting ?? '').trim();
     if (setting) {
-        return expandHome(setting, homedir);
+        return expandHome(setting, options.homedir);
     }
-    const envDir = (options.env ?? process.env).CLAUDE_CONFIG_DIR?.trim();
+    const envDir = (options.env ?? {}).CLAUDE_CONFIG_DIR?.trim();
     if (envDir) {
-        return expandHome(envDir, homedir);
+        return expandHome(envDir, options.homedir);
     }
-    return path.join(homedir, '.claude');
+    return join2(options.homedir, '.claude');
 }
 
 export function claudeProjectsDir(configDir: string): string {
-    return path.join(configDir, 'projects');
+    return join2(configDir, 'projects');
 }
 
 /** True when the resolved path is the default ~/.claude (no relocation). */
-export function isDefaultClaudeConfigDir(dir: string, homedir: string = os.homedir()): boolean {
-    return path.normalize(path.resolve(dir)) === path.normalize(path.resolve(path.join(homedir, '.claude')));
+export function isDefaultClaudeConfigDir(dir: string, homedir: string): boolean {
+    return normalizePath(dir) === normalizePath(join2(homedir, '.claude'));
 }
 
 /** True when the user explicitly relocated config via setting or env. */
-export function hasExplicitConfigDir(setting?: string, env: NodeJS.ProcessEnv = process.env): boolean {
+export function hasExplicitConfigDir(setting?: string, env: EnvMap = {}): boolean {
     return Boolean((setting ?? '').trim() || (env.CLAUDE_CONFIG_DIR ?? '').trim());
 }

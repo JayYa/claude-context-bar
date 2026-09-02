@@ -24,7 +24,7 @@ import * as os from 'os';
 import * as https from 'https';
 import * as crypto from 'crypto';
 import { execFile } from 'child_process';
-import { isDefaultClaudeConfigDir, resolveClaudeConfigDir } from './configDir';
+import { defaultHomedir, readProcessEnv, resolveClaudeConfigDir } from './configDir';
 
 export interface UsageMeter {
     key: string;
@@ -79,29 +79,18 @@ function humanizeKey(key: string): string {
  * 8-char config-dir hash suffix appended when a non-default CLAUDE_CONFIG_DIR
  * (or CLAUDE_SECURESTORAGE_CONFIG_DIR) is in use.
  */
-function keychainServiceName(resolvedConfigDir?: string): string {
+function keychainServiceName(): string {
     const secureDir = process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
-    if (secureDir !== undefined) {
-        if (!secureDir) {
-            return 'Claude Code-credentials';
-        }
-        const hash = crypto.createHash('sha256').update(secureDir.normalize('NFC')).digest('hex').substring(0, 8);
-        return `Claude Code-credentials-${hash}`;
+    const configDir = process.env.CLAUDE_CONFIG_DIR;
+
+    const isDefault = secureDir !== undefined ? !secureDir : !configDir;
+    if (isDefault) {
+        return 'Claude Code-credentials';
     }
 
-    // Hash the same string Claude Code would: the raw env var when present.
-    const envDir = process.env.CLAUDE_CONFIG_DIR;
-    if (envDir) {
-        const hash = crypto.createHash('sha256').update(envDir.normalize('NFC')).digest('hex').substring(0, 8);
-        return `Claude Code-credentials-${hash}`;
-    }
-
-    if (resolvedConfigDir && !isDefaultClaudeConfigDir(resolvedConfigDir)) {
-        const hash = crypto.createHash('sha256').update(resolvedConfigDir.normalize('NFC')).digest('hex').substring(0, 8);
-        return `Claude Code-credentials-${hash}`;
-    }
-
-    return 'Claude Code-credentials';
+    const dir = (secureDir !== undefined ? secureDir : configDir || '').normalize('NFC');
+    const hash = crypto.createHash('sha256').update(dir).digest('hex').substring(0, 8);
+    return `Claude Code-credentials-${hash}`;
 }
 
 function keychainAccount(): string {
@@ -134,11 +123,11 @@ function readTokenFromCredentialsFile(configDir: string): string | null {
     }
 }
 
-function readTokenFromKeychain(configDir?: string): Promise<string | null> {
+function readTokenFromKeychain(): Promise<string | null> {
     return new Promise((resolve) => {
         execFile(
             'security',
-            ['find-generic-password', '-a', keychainAccount(), '-w', '-s', keychainServiceName(configDir)],
+            ['find-generic-password', '-a', keychainAccount(), '-w', '-s', keychainServiceName()],
             { timeout: 5000 },
             (err, stdout) => {
                 if (err || !stdout) {
@@ -156,9 +145,10 @@ function readTokenFromKeychain(configDir?: string): Promise<string | null> {
  * Returns null if unavailable (not logged in, API-key auth, etc.).
  */
 export async function readOAuthToken(configDir?: string): Promise<string | null> {
-    const resolved = configDir || resolveClaudeConfigDir();
+    const env = readProcessEnv();
+    const resolved = configDir || resolveClaudeConfigDir({ env, homedir: defaultHomedir(env) });
     if (process.platform === 'darwin') {
-        const fromKeychain = await readTokenFromKeychain(resolved);
+        const fromKeychain = await readTokenFromKeychain();
         if (fromKeychain) {
             return fromKeychain;
         }
