@@ -4,6 +4,9 @@ All notable changes to the Claude Context Bar extension will be documented in th
 
 ## [Unreleased]
 
+### Fixed
+- **`refreshInterval` and `usageRefreshInterval` changes now take effect immediately, without reloading the window.** Both intervals were read once at activation, so editing either one only forced a single extra refresh — the polling cadence itself kept running at the value in force when the window opened, and nothing said so. The configuration watcher now clears both timers and recreates them from the new settings on any `claudeContextBar` change, in that order, so repeatedly adjusting an interval never leaves earlier timers running alongside the current one. Slower intervals take effect just as promptly as faster ones. Changing a setting unrelated to the intervals still refreshes as before.
+
 ## [1.7.1] - 2026-09-02
 
 A settings reorganisation only: no retained setting changed its default value or its meaning, so nothing needs re-tuning.
