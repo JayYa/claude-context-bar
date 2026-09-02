@@ -77,6 +77,22 @@ function currentSettings(): Settings {
     return readSettings(vscode.workspace.getConfiguration('claudeContextBar'));
 }
 
+/**
+ * Installs both polling timers from a snapshot, clearing any existing ones
+ * first so a reinstall never leaves a second timer running. Activation and the
+ * configuration watcher both go through here, so the two paths cannot drift.
+ */
+function installTimers(settings: Settings) {
+    if (refreshInterval) {
+        clearInterval(refreshInterval);
+    }
+    if (usageInterval) {
+        clearInterval(usageInterval);
+    }
+    refreshInterval = setInterval(refreshAllSessions, settings.refreshInterval * 1000);
+    usageInterval = setInterval(refreshUsageData, settings.usageRefreshInterval * 1000);
+}
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('Claude Context Bar is now active');
 
@@ -91,7 +107,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Listen for configuration changes and refresh immediately
     const configWatcher = vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('claudeContextBar')) {
-            ensureFileWatcher(currentSettings());
+            const settings = currentSettings();
+            ensureFileWatcher(settings);
+            // Unconditional reinstall: a changed interval takes effect at once,
+            // with no "did the interval change?" test to keep in sync.
+            installTimers(settings);
             refreshAllSessions();
             refreshUsageData();
         }
@@ -112,9 +132,7 @@ export function activate(context: vscode.ExtensionContext) {
     refreshUsageData();
 
     // Set up periodic refresh
-    const settings = currentSettings();
-    refreshInterval = setInterval(refreshAllSessions, settings.refreshInterval * 1000);
-    usageInterval = setInterval(refreshUsageData, settings.usageRefreshInterval * 1000);
+    installTimers(currentSettings());
 
     // Clean up on deactivation
     context.subscriptions.push({
