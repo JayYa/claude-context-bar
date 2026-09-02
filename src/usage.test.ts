@@ -13,7 +13,6 @@ import {
     pickSessionTitle,
     truncateLabel,
     formatTokens,
-    formatUsageValue,
     formatStatusBarText,
     disambiguateNames,
     resolveDisplayName,
@@ -290,16 +289,11 @@ describe('truncateLabel', () => {
     });
 });
 
-describe('formatTokens / formatUsageValue', () => {
+describe('formatTokens', () => {
     it('formats thousands and millions', () => {
         assert.equal(formatTokens(185_000), '185K');
         assert.equal(formatTokens(1_200_000), '1.2M');
         assert.equal(formatTokens(42), '42');
-    });
-
-    it('switches between percent and tokens', () => {
-        assert.equal(formatUsageValue(18, 185_000, 'percent'), '18%');
-        assert.equal(formatUsageValue(18, 185_000, 'tokens'), '185K');
     });
 });
 

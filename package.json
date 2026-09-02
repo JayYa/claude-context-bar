@@ -100,20 +100,6 @@
                         "default": "project",
                         "order": 6,
                         "description": "What to show as the status bar name. Hover always includes the session title when Claude Code has written one."
-                    },
-                    "claudeContextBar.usageFormat": {
-                        "type": "string",
-                        "enum": [
-                            "percent",
-                            "tokens"
-                        ],
-                        "enumDescriptions": [
-                            "Show usage as a percent of the model context window",
-                            "Show usage as an absolute token count (e.g. 185K)"
-                        ],
-                        "default": "tokens",
-                        "order": 7,
-                        "markdownDescription": "How to show context usage on the status bar. Warning and danger colors are unaffected: they always use the absolute token counts in `#claudeContextBar.warningTokens#` and `#claudeContextBar.dangerTokens#`."
                     }
                 }
             },
@@ -146,20 +132,6 @@
                         "minimum": 0,
                         "order": 4,
                         "markdownDescription": "Tokens consumed at which to show danger color (red). An absolute token count, not a percentage. Set `0` to disable the danger color. Should be higher than `#claudeContextBar.warningTokens#`; if it is not, only the danger color appears."
-                    },
-                    "claudeContextBar.warningThreshold": {
-                        "type": "number",
-                        "default": 50,
-                        "order": 5,
-                        "description": "Percentage of the context window at which to show warning color (yellow)",
-                        "deprecationMessage": "No longer used. Replaced by claudeContextBar.warningTokens, which is measured in tokens rather than percent: a percentage is not comparable across models with different context window sizes."
-                    },
-                    "claudeContextBar.dangerThreshold": {
-                        "type": "number",
-                        "default": 75,
-                        "order": 6,
-                        "description": "Percentage of the context window at which to show danger color (red)",
-                        "deprecationMessage": "No longer used. Replaced by claudeContextBar.dangerTokens, which is measured in tokens rather than percent: a percentage is not comparable across models with different context window sizes."
                     }
                 }
             },
