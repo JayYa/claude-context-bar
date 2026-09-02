@@ -47,16 +47,42 @@
                 "title": "Appearance",
                 "order": 1,
                 "properties": {
+                    "claudeContextBar.label": {
+                        "type": "string",
+                        "enum": [
+                            "project",
+                            "session"
+                        ],
+                        "enumDescriptions": [
+                            "Show the project folder name",
+                            "Show the Claude Code session title (from /rename or the generated summary)"
+                        ],
+                        "default": "project",
+                        "order": 1,
+                        "description": "What to show as the status bar name. Hover always includes the session title when Claude Code has written one."
+                    },
+                    "claudeContextBar.compactMode": {
+                        "type": "boolean",
+                        "default": false,
+                        "order": 2,
+                        "markdownDescription": "Shorten project names to save status bar space. Multi-word names become acronyms (`my-cool-project` → `MCP`), single words become abbreviated (`typescript` → `Tscript`). Names ≤5 chars stay unchanged. Only applies when `#claudeContextBar.label#` is `project`."
+                    },
+                    "claudeContextBar.shortNames": {
+                        "type": "object",
+                        "default": {},
+                        "order": 3,
+                        "markdownDescription": "Custom short names for projects. Keys are project names, values are the short versions, e.g. `{\"my-cool-project\": \"MCP\", \"webapp\": \"WA\"}`. Only applies when `#claudeContextBar.label#` is `project`."
+                    },
                     "claudeContextBar.showEmoji": {
                         "type": "boolean",
                         "default": true,
-                        "order": 1,
+                        "order": 4,
                         "description": "Show emoji icons based on project name (music 🎵, code 💻, game 🎮, etc.)"
                     },
                     "claudeContextBar.autoColor": {
                         "type": "boolean",
                         "default": true,
-                        "order": 2,
+                        "order": 5,
                         "description": "Automatically assign different colors to each project (rainbow). When off, uses your base color with subtle variations."
                     },
                     "claudeContextBar.baseColor": {
@@ -72,34 +98,8 @@
                             "Pink"
                         ],
                         "default": "White",
-                        "order": 3,
-                        "markdownDescription": "Base color when `#claudeContextBar.autoColor#` is off. Each project gets a subtle variation of this color."
-                    },
-                    "claudeContextBar.compactMode": {
-                        "type": "boolean",
-                        "default": false,
-                        "order": 4,
-                        "markdownDescription": "Shorten project names to save status bar space. Multi-word names become acronyms (`my-cool-project` → `MCP`), single words become abbreviated (`typescript` → `Tscript`). Names ≤5 chars stay unchanged."
-                    },
-                    "claudeContextBar.shortNames": {
-                        "type": "object",
-                        "default": {},
-                        "order": 5,
-                        "markdownDescription": "Custom short names for projects. Keys are project names, values are the short versions, e.g. `{\"my-cool-project\": \"MCP\", \"webapp\": \"WA\"}`."
-                    },
-                    "claudeContextBar.label": {
-                        "type": "string",
-                        "enum": [
-                            "project",
-                            "session"
-                        ],
-                        "enumDescriptions": [
-                            "Show the project folder name",
-                            "Show the Claude Code session title (from /rename or the generated summary)"
-                        ],
-                        "default": "project",
                         "order": 6,
-                        "description": "What to show as the status bar name. Hover always includes the session title when Claude Code has written one."
+                        "markdownDescription": "Base color when `#claudeContextBar.autoColor#` is off. Each project gets a subtle variation of this color."
                     }
                 }
             },

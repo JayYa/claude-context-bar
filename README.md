@@ -65,12 +65,12 @@ Settings are grouped into five sections, matching the VS Code settings UI.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `claudeContextBar.label` | `project` | Status bar name: `project` (folder) or `session` (Claude Code title) |
+| `claudeContextBar.compactMode` | `false` | Shorten project names to save status bar space. Only applies when `label` is `project` |
+| `claudeContextBar.shortNames` | `{}` | Custom short names for projects (e.g., `{"my-project": "MP"}`). Only applies when `label` is `project` |
 | `claudeContextBar.showEmoji` | `true` | Show emoji icons based on project name keywords |
 | `claudeContextBar.autoColor` | `true` | Automatically assign unique pastel colors to each project |
 | `claudeContextBar.baseColor` | `White` | Base color when Auto Color is off (subtle variations per project) |
-| `claudeContextBar.compactMode` | `false` | Shorten project names to save status bar space |
-| `claudeContextBar.shortNames` | `{}` | Custom short names for projects (e.g., `{"my-project": "MP"}`) |
-| `claudeContextBar.label` | `project` | Status bar name: `project` (folder) or `session` (Claude Code title) |
 
 #### Context Window
 
