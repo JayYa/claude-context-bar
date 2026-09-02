@@ -59,7 +59,7 @@
 
 ## Configuration
 
-Settings are grouped into four sections, matching the VS Code settings UI.
+Settings are grouped into five sections, matching the VS Code settings UI.
 
 #### Appearance
 
@@ -96,6 +96,13 @@ Settings are grouped into four sections, matching the VS Code settings UI.
 |---------|---------|-------------|
 | `claudeContextBar.refreshInterval` | `30` | How often (seconds) to refresh context usage from session files |
 | `claudeContextBar.idleTimeout` | `180` | Seconds of inactivity before hiding a session (3 minutes). Set `0` to never hide idle sessions |
+
+#### Data Source
+
+Where the extension reads its data from — which location on disk it looks in for Claude Code's own files.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `claudeContextBar.configDir` | `""` | Claude Code config directory (the folder that contains `projects/`). Empty = `CLAUDE_CONFIG_DIR`, then `~/.claude` |
 
 ## How It Works
