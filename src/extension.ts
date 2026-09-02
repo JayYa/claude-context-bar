@@ -33,13 +33,13 @@ const hiddenSessions: Map<string, number> = new Map();
 let fileWatcher: fs.FSWatcher | null = null;
 let watchedDir: string | null = null;
 let missingDirItem: vscode.StatusBarItem | null = null;
-let refreshInterval: NodeJS.Timeout | null = null;
+let refreshTimer: NodeJS.Timeout | null = null;
 
 // Subscription usage shown in a single
 // status bar item to the right of the per-tab context items.
 let usageItem: vscode.StatusBarItem | null = null;
 let usageData: UsageData | null = null;
-let usageInterval: NodeJS.Timeout | null = null;
+let usageTimer: NodeJS.Timeout | null = null;
 
 const STATUS_BAR_PRIORITY_BASE = 900;
 const ITEM_CLAUDE_ICON = '✴️';
@@ -70,11 +70,27 @@ const BASE_COLOR_VARIATIONS: Record<string, string[]> = {
 /**
  * The extension's single point of contact with VS Code's settings: every other
  * function receives the resulting snapshot as a parameter. Called once per
- * refresh (and once per config change), never cached in a module-level
+ * refresh (and again whenever a setting changes), never cached in a module-level
  * variable — a snapshot's life is one refresh.
  */
 function currentSettings(): Settings {
     return readSettings(vscode.workspace.getConfiguration('claudeContextBar'));
+}
+
+/**
+ * Stops both polling timers and forgets their handles. Every place that
+ * tears the timers down — reinstall, dispose, deactivate — goes through here,
+ * so none of them can drop one of the pair.
+ */
+function clearTimers() {
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+    }
+    if (usageTimer) {
+        clearInterval(usageTimer);
+        usageTimer = null;
+    }
 }
 
 /**
@@ -83,14 +99,9 @@ function currentSettings(): Settings {
  * configuration watcher both go through here, so the two paths cannot drift.
  */
 function installTimers(settings: Settings) {
-    if (refreshInterval) {
-        clearInterval(refreshInterval);
-    }
-    if (usageInterval) {
-        clearInterval(usageInterval);
-    }
-    refreshInterval = setInterval(refreshAllSessions, settings.refreshInterval * 1000);
-    usageInterval = setInterval(refreshUsageData, settings.usageRefreshInterval * 1000);
+    clearTimers();
+    refreshTimer = setInterval(refreshAllSessions, settings.refreshInterval * 1000);
+    usageTimer = setInterval(refreshUsageData, settings.usageRefreshInterval * 1000);
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -138,12 +149,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push({
         dispose: () => {
             closeFileWatcher();
-            if (refreshInterval) {
-                clearInterval(refreshInterval);
-            }
-            if (usageInterval) {
-                clearInterval(usageInterval);
-            }
+            clearTimers();
             statusBarItems.forEach(entry => entry.item.dispose());
             statusBarItems.clear();
             usageItem?.dispose();
@@ -156,12 +162,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
     closeFileWatcher();
-    if (refreshInterval) {
-        clearInterval(refreshInterval);
-    }
-    if (usageInterval) {
-        clearInterval(usageInterval);
-    }
+    clearTimers();
     statusBarItems.forEach(entry => entry.item.dispose());
     statusBarItems.clear();
     usageItem?.dispose();
@@ -696,7 +697,7 @@ async function refreshAllSessions() {
 
 // Render the single global usage item (e.g. "✴️ 7%") to the right of the context items.
 function renderUsageItem(settings: Settings) {
-    // No usage data means nothing to show. `showUsage` is judged once, in
+    // No usage data means nothing to show. `showUsage` is judged only in
     // `refreshUsageData`, which clears `usageData` when the setting is off —
     // so this one condition covers both "switched off" and "not fetched yet".
     if (!usageData?.session) {
@@ -772,17 +773,30 @@ async function refreshUsageData() {
         return;
     }
     usageFetchInFlight = true;
+    let fetched: UsageData | null = null;
     try {
-        const fetched = await getUsage(getClaudeCodeVersion(), getClaudeConfigDir(settings));
-        // Keep the last successful value on a transient failure rather than flicker.
-        if (fetched) {
-            usageData = fetched;
-        }
+        fetched = await getUsage(getClaudeCodeVersion(), getClaudeConfigDir(settings));
     } catch (e) {
         console.error('Failed to fetch Claude usage:', e);
     } finally {
         usageFetchInFlight = false;
     }
 
-    renderUsageItem(settings);
+    // The await gave the user time to switch `showUsage` off, which would have
+    // hidden the item already; the snapshot this call started with still says
+    // on. Judge the setting again — still here, still the only place — against a
+    // fresh snapshot, so a result that arrives after the switch is dropped
+    // rather than bringing the item back until the next tick.
+    const settled = currentSettings();
+    if (!settled.showUsage) {
+        usageData = null;
+        renderUsageItem(settled);
+        return;
+    }
+
+    // Keep the last successful value on a transient failure rather than flicker.
+    if (fetched) {
+        usageData = fetched;
+    }
+    renderUsageItem(settled);
 }
