@@ -99,8 +99,6 @@ Settings are grouped into five sections, matching the VS Code settings UI.
 
 #### Data Source
 
-Where the extension reads its data from — which location on disk it looks in for Claude Code's own files.
-
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `claudeContextBar.configDir` | `""` | Claude Code config directory (the folder that contains `projects/`). Empty = `CLAUDE_CONFIG_DIR`, then `~/.claude` |
