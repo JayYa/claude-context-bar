@@ -4,9 +4,11 @@
 
 ## Features
 
-🧠 **Live Context Tracking** — See your Claude Code context usage percentage right in the status bar
+🧠 **Live Context Tracking** — See your Claude Code context usage right in the status bar
 
 ⚡ **Per-Tab Monitoring** — Each Claude Code tab gets its own context indicator
+
+🏷️ **Session Titles** — Hover shows the Claude Code session name. Optionally use it on the status bar when several tabs share a project
 
 🎯 **Fuzzy Emoji Matching** — Icons automatically match your project type based on name keywords:
 - 🎵 Music/audio projects
@@ -27,7 +29,8 @@
 - Danger (red background): Over 75% usage
 
 📊 **Detailed Tooltips** — Hover to see:
-- First message (matches Claude Code tab name)
+- Session title (when Claude Code has generated or you have named one)
+- First message
 - Model name
 - Cache Read / Cache Creation tokens
 - Total context used vs limit
@@ -41,8 +44,9 @@
 
 📐 **Compact Mode** — Shorten project names to save space (my-cool-project → MCP, typescript → Tscript)
 
-✴️ **Subscription Usage** — Opt-in (off by default): see your Claude `/usage` Session (5-hour) limit as its own status bar item (e.g. `✴️ 7%`), with color-coded warnings independent of the context colors. Hover for the full breakdown (Weekly, and per-model limits like Weekly Fable) with reset times. Experimental, may stop working at any time (see [Subscription usage](#subscription-usage))
+💯 **Token Display** — Optionally show absolute tokens on the status bar (185K) instead of percent (18%)
 
+✴️ **Subscription Usage** — Opt-in (off by default): see your Claude `/usage` Session (5-hour) limit as its own status bar item (e.g. `✴️ 7%`), with color-coded warnings independent of the context colors. Hover for the full breakdown (Weekly, and per-model limits like Weekly Fable) with reset times. Experimental, may stop working at any time (see [Subscription usage](#subscription-usage))
 
 ## Requirements
 
@@ -70,12 +74,17 @@
 | `claudeContextBar.usageRefreshInterval` | `60` | How often (seconds) to refresh subscription usage from the `/usage` endpoint |
 | `claudeContextBar.refreshInterval` | `30` | Refresh interval in seconds |
 | `claudeContextBar.idleTimeout` | `180` | Seconds of inactivity before hiding a session (3 minutes). Set `0` to never hide idle sessions |
+| `claudeContextBar.configDir` | `""` | Claude Code config directory (the folder that contains `projects/`). Empty = `CLAUDE_CONFIG_DIR`, then `~/.claude` |
 | `claudeContextBar.compactMode` | `false` | Shorten project names to save status bar space |
 | `claudeContextBar.shortNames` | `{}` | Custom short names for projects (e.g., `{"my-project": "MP"}`) |
+| `claudeContextBar.label` | `project` | Status bar name: `project` (folder) or `session` (Claude Code title) |
+| `claudeContextBar.usageFormat` | `percent` | Status bar usage: `percent` or `tokens` (e.g. `185K`). Warning colors still use percent |
 
 ## How It Works
 
-The extension reads Claude Code's session files from `~/.claude/projects/` and calculates token usage from the JSONL logs. It resolves the context limit per model using this priority chain:
+The extension reads Claude Code's session files from `<configDir>/projects/` and calculates token usage from the JSONL logs. `<configDir>` is `claudeContextBar.configDir` if set, otherwise the `CLAUDE_CONFIG_DIR` environment variable, otherwise `~/.claude`. VS Code launched from the Start Menu or Finder often does not inherit shell-only env vars — use the setting in that case.
+
+It resolves the context limit per model using this priority chain:
 
 1. **User override** — the `modelContextLimits` setting (exact Model ID match). Highest priority, overrides everything below.
 2. **200K models** — Haiku and legacy generations (Claude 3.x, Sonnet 4.5 and earlier, Opus 4.5 and earlier) resolve to 200,000 tokens.
@@ -90,7 +99,7 @@ Sessions inactive for more than 3 minutes (configurable via `idleTimeout`, `0` d
 
 > **Experimental, off by default.** This feature relies on an undocumented Anthropic endpoint (the one Claude Code's own `/usage` command reads). Treat it as a temporary bonus: it may change or stop working at any time, entirely at Anthropic's discretion. Enable it with `claudeContextBar.showUsage: true`.
 
-The context percentage is computed entirely from local files. The subscription usage (the `/usage` limits) is different: it is fetched from Claude's authenticated `GET /api/oauth/usage` endpoint, using the OAuth token that Claude Code stores in your OS credential store (macOS Keychain item `Claude Code-credentials`, or `~/.claude/.credentials.json` on Linux/Windows). This is the same data and the same mechanism Claude Code uses for its own `/usage` command; the token is used only as the request's `Authorization` header and is never logged or stored by the extension.
+The context percentage is computed entirely from local files. The subscription usage (the `/usage` limits) is different: it is fetched from Claude's authenticated `GET /api/oauth/usage` endpoint, using the OAuth token that Claude Code stores in your OS credential store (macOS Keychain item `Claude Code-credentials`, or `<configDir>/.credentials.json` on Linux/Windows). This is the same data and the same mechanism Claude Code uses for its own `/usage` command; the token is used only as the request's `Authorization` header and is never logged or stored by the extension.
 
 Usage is refreshed on its own cadence (`usageRefreshInterval`, default 60 seconds, independent of the context refresh) and the last known value is kept during transient failures. The endpoint rate-limits frequent polling, so avoid setting the interval very low. If you are not signed in with a Claude subscription (for example, using an API key), the usage item simply doesn't appear. Turn it off entirely with `showUsage`.
 
