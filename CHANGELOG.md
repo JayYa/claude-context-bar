@@ -2,6 +2,18 @@
 
 All notable changes to the Claude Context Bar extension will be documented in this file.
 
+## [1.7.0] - 2026-09-01
+
+### Added
+- **`claudeContextBar.configDir`** — locate sessions (and usage credentials) outside `~/.claude`. Resolution order: this setting, then `CLAUDE_CONFIG_DIR`, then `~/.claude`. Covers GUI-launched VS Code that does not inherit a shell-only env var (#12). If a relocated dir is missing, a warning item appears instead of a blank bar.
+- **`claudeContextBar.label`** — `project` (default) or `session`. Session mode uses the Claude Code title from `/rename` / `-n` (`custom-title`) or the generated summary (`ai-title`), truncated to fit the status bar (#11).
+- **`claudeContextBar.usageFormat`** — `tokens` (default, e.g. `185K`) or `percent`, bringing back the percentage display that 1.6.4 replaced. This only changes the number on the status bar: warning and danger colors are unaffected and still use the absolute `warningTokens` / `dangerTokens` counts (#10).
+- Hover tooltips always include the session title when Claude Code has written one.
+
+### Changed
+- File watcher follows config-dir changes and starts watching if the folder appears later.
+- Subscription usage credentials use the same resolved config directory as session files.
+
 ## [1.6.4] - 2026-08-26
 
 ### Changed

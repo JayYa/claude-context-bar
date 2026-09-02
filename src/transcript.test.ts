@@ -35,6 +35,7 @@ function assertNothingParsed(transcript: Transcript): void {
     assert.equal(transcript.totalTokens, 0);
     assert.equal(transcript.model, '');
     assert.equal(transcript.firstMessage, '');
+    assert.equal(transcript.sessionTitle, '');
     assert.equal(transcript.sessionCreated, null);
     assert.equal(transcript.wasCleared, false);
 }
@@ -272,6 +273,48 @@ describe('parseTranscript — first message', () => {
         const transcript = parseTranscript([assistantLine({ input_tokens: 1 })]);
 
         assert.equal(transcript.firstMessage, '');
+    });
+});
+
+describe('parseTranscript — session title', () => {
+    it('reads a generated title', () => {
+        const transcript = parseTranscript([line({ type: 'ai-title', aiTitle: 'Fixing the parser' })]);
+
+        assert.equal(transcript.sessionTitle, 'Fixing the parser');
+    });
+
+    it('prefers a user-chosen title over a generated one', () => {
+        const transcript = parseTranscript([
+            line({ type: 'ai-title', aiTitle: 'Fixing the parser' }),
+            line({ type: 'custom-title', customTitle: 'Parser work' }),
+        ]);
+
+        assert.equal(transcript.sessionTitle, 'Parser work');
+    });
+
+    it('keeps the last title of each kind', () => {
+        const transcript = parseTranscript([
+            line({ type: 'custom-title', customTitle: 'First name' }),
+            line({ type: 'custom-title', customTitle: 'Renamed' }),
+        ]);
+
+        assert.equal(transcript.sessionTitle, 'Renamed');
+    });
+
+    it('ignores titles written before the last /clear', () => {
+        const transcript = parseTranscript([
+            line({ type: 'custom-title', customTitle: 'Old conversation' }),
+            CLEAR_LINE,
+            userLine('starting over'),
+        ]);
+
+        assert.equal(transcript.sessionTitle, '');
+    });
+
+    it('leaves the title empty when none was written', () => {
+        const transcript = parseTranscript([userLine('hello')]);
+
+        assert.equal(transcript.sessionTitle, '');
     });
 });
 

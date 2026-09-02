@@ -6,6 +6,8 @@
  * job. See `Transcript` for what the value carries.
  */
 
+import { pickSessionTitle, readTitleFromEntry } from './statusBarText';
+
 /**
  * Everything one Claude Code session file says about its conversation.
  *
@@ -30,6 +32,13 @@ export interface Transcript {
      * ellipsis: the ellipsis is presentation and belongs to the tooltip.
      */
     firstMessage: string;
+    /**
+     * The session's own title, or '' when Claude Code has not written one.
+     *
+     * Read from the `custom-title` and `ai-title` entries in the counted
+     * region, a user-chosen name winning over the generated summary.
+     */
+    sessionTitle: string;
     /** First timestamp in the counted region, or null if there is none. */
     sessionCreated: Date | null;
     /** True when the conversation ends on a `/clear` with nothing after it. */
@@ -62,6 +71,7 @@ function nothingParsed(lineCount: number): Transcript {
         totalTokens: 0,
         model: '',
         firstMessage: '',
+        sessionTitle: '',
         sessionCreated: null,
         wasCleared: false,
         lineCount,
@@ -134,6 +144,8 @@ function parse(lines: readonly string[]): Transcript {
     const startIndex = clearIndex >= 0 ? clearIndex + 1 : 0;
 
     let firstMessage = '';
+    let customTitle = '';
+    let aiTitle = '';
     let sessionCreated: Date | null = null;
     let model = '';
     let inputTokens = 0;
@@ -154,6 +166,16 @@ function parse(lines: readonly string[]): Transcript {
             if (!Number.isNaN(parsed.getTime())) {
                 sessionCreated = parsed;
             }
+        }
+
+        // Later title entries win: Claude Code appends a new one on `/rename`
+        // and when it regenerates the summary.
+        const titles = readTitleFromEntry(entry);
+        if (titles.customTitle) {
+            customTitle = titles.customTitle;
+        }
+        if (titles.aiTitle) {
+            aiTitle = titles.aiTitle;
         }
 
         if (!firstMessage) {
@@ -182,6 +204,7 @@ function parse(lines: readonly string[]): Transcript {
         totalTokens: inputTokens + cacheReadTokens + cacheCreationTokens,
         model,
         firstMessage,
+        sessionTitle: pickSessionTitle(customTitle, aiTitle),
         sessionCreated,
         wasCleared,
         lineCount: lines.length,

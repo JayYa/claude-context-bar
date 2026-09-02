@@ -18,6 +18,15 @@
  */
 export interface SessionInfo {
     projectName: string;
+    /**
+     * The project's name without any numeric suffix, kept alongside
+     * `projectName` for the parts of the display that must not see the
+     * numbering: the emoji lookup and the fallback when a session has no
+     * title. `selectActiveSessions` never rewrites it.
+     */
+    baseProjectName: string;
+    /** The Claude Code session title, or '' when none has been written. */
+    sessionTitle: string;
     projectPath: string;
     sessionId: string;
     sessionFile: string;

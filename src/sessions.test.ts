@@ -25,6 +25,8 @@ function session(overrides: SessionOverrides = {}): SessionInfo {
 
     return {
         projectName: overrides.project ?? 'webapp',
+        baseProjectName: overrides.project ?? 'webapp',
+        sessionTitle: '',
         projectPath: '/home/dev/webapp',
         sessionId: id.substring(0, 8),
         sessionFile: `/home/dev/.claude/projects/webapp/${id}.jsonl`,

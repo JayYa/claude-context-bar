@@ -16,3 +16,9 @@ INTERNAL-DEV-NOTES.md
 .DS_Store
 Thumbs.db
 .claude/
+
+# Local backups
+_BACKUPS/
+
+# Private planning notes
+whats-next.md
