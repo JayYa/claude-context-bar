@@ -37,6 +37,13 @@ Settings that say where the extension reads its data from — where on disk it l
 指明扩展从哪里读取数据：到磁盘上的哪里去找 Claude Code 自己的文件。与 Behavior 不同：Behavior 管*何时*动作，Data Source 管*从哪里*读。
 _Avoid_: Path, Directory, Location, Advanced / 路径、目录、位置、高级
 
+### Settings 设置快照
+
+**Settings（设置快照）**:
+Every setting value read in one go at the start of a refresh, held read-only for the rest of that refresh and passed down by parameter. Distinct from Settings groups: a group is a classification that says which category one setting belongs to and where it shows up in the settings UI and the README; Settings is the whole set of values as of one refresh. It is a snapshot, not a handle you can ask for a fresh value through — code that holds one reads what that refresh saw, and the next refresh takes a new snapshot.
+一轮刷新开始时一次性读到的全部设置值，在这一轮里只读，往下经参数传递。与 Settings groups 不同：分组是归类，说的是某一项设置属于哪一类、在设置界面和 README 里出现在哪；Settings 指的是某一轮刷新读到的全部值。它是快照，不是一个可以随时再取值的入口——拿到它的代码读到的就是那一轮看到的值，下一轮会重新取一份。
+_Avoid_: Config, Options, Preferences / 配置、选项、偏好
+
 ### Session concepts 会话概念
 
 **Transcript（会话记录）**:
