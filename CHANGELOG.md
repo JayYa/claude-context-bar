@@ -2,7 +2,7 @@
 
 All notable changes to the Claude Context Bar extension will be documented in this file.
 
-## [Unreleased]
+## [1.7.2] - 2026-09-02
 
 ### Changed
 - **A context window size of `0` or less is now rejected instead of used.** `contextLimit` falls back to the 200,000 default when it is set to zero or a negative number, and entries of `modelContextLimits` with a non-positive size are dropped so those models resolve through the normal chain instead. Neither setting declares a minimum, so such a value could be saved, and it made the consumed percentage divide by zero and read as `Infinity%`. `warningTokens`, `dangerTokens` and `idleTimeout` are untouched: `0` is documented there as "switch this off" and still means exactly that.
