@@ -32,6 +32,11 @@ Settings that control when the extension acts and when a status bar item appears
 控制扩展何时动作、条目何时出现或消失；与条目长什么样、量什么无关。
 _Avoid_: Advanced, Misc, General, Timing / 高级、杂项、通用、计时
 
+**Data Source（数据来源）**:
+Settings that say where the extension reads its data from — where on disk it looks for Claude Code's own files. Distinct from Behavior: Behavior decides *when* the extension acts, Data Source decides *where* it reads from.
+指明扩展从哪里读取数据：到磁盘上的哪里去找 Claude Code 自己的文件。与 Behavior 不同：Behavior 管*何时*动作，Data Source 管*从哪里*读。
+_Avoid_: Path, Directory, Location, Advanced / 路径、目录、位置、高级
+
 ### Session concepts 会话概念
 
 **Transcript（会话记录）**:

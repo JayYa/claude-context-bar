@@ -4,7 +4,6 @@
  */
 
 export type StatusBarLabel = 'project' | 'session';
-export type UsageFormat = 'percent' | 'tokens';
 
 export const STATUS_BAR_NAME_MAX = 24;
 
@@ -61,13 +60,6 @@ export function formatTokens(tokens: number): string {
         return Math.round(tokens / 1000) + 'K';
     }
     return tokens.toString();
-}
-
-export function formatUsageValue(percentage: number, totalTokens: number, format: UsageFormat): string {
-    if (format === 'tokens') {
-        return formatTokens(totalTokens);
-    }
-    return `${percentage}%`;
 }
 
 export function formatStatusBarText(icon: string, displayName: string, usageValue: string): string {

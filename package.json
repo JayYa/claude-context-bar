@@ -2,7 +2,7 @@
     "name": "claude-context-bar",
     "displayName": "Claude Context Bar",
     "description": "Real-time context window usage monitor for Claude Code sessions. See token counts in your status bar with color-coded warnings.",
-    "version": "1.7.0",
+    "version": "1.7.1",
     "publisher": "ezoosk",
     "author": {
         "name": "Ed Zisk",
@@ -47,16 +47,42 @@
                 "title": "Appearance",
                 "order": 1,
                 "properties": {
+                    "claudeContextBar.label": {
+                        "type": "string",
+                        "enum": [
+                            "project",
+                            "session"
+                        ],
+                        "enumDescriptions": [
+                            "Show the project folder name",
+                            "Show the Claude Code session title (from /rename or the generated summary)"
+                        ],
+                        "default": "project",
+                        "order": 1,
+                        "description": "What to show as the status bar name. Hover always includes the session title when Claude Code has written one."
+                    },
+                    "claudeContextBar.compactMode": {
+                        "type": "boolean",
+                        "default": false,
+                        "order": 2,
+                        "markdownDescription": "Shorten project names to save status bar space. Multi-word names become acronyms (`my-cool-project` → `MCP`), single words become abbreviated (`typescript` → `Tscript`). Names ≤5 chars stay unchanged. Only applies when `#claudeContextBar.label#` is `project`."
+                    },
+                    "claudeContextBar.shortNames": {
+                        "type": "object",
+                        "default": {},
+                        "order": 3,
+                        "markdownDescription": "Custom short names for projects. Keys are project names, values are the short versions, e.g. `{\"my-cool-project\": \"MCP\", \"webapp\": \"WA\"}`. Only applies when `#claudeContextBar.label#` is `project`."
+                    },
                     "claudeContextBar.showEmoji": {
                         "type": "boolean",
                         "default": true,
-                        "order": 1,
+                        "order": 4,
                         "description": "Show emoji icons based on project name (music 🎵, code 💻, game 🎮, etc.)"
                     },
                     "claudeContextBar.autoColor": {
                         "type": "boolean",
                         "default": true,
-                        "order": 2,
+                        "order": 5,
                         "description": "Automatically assign different colors to each project (rainbow). When off, uses your base color with subtle variations."
                     },
                     "claudeContextBar.baseColor": {
@@ -72,48 +98,8 @@
                             "Pink"
                         ],
                         "default": "White",
-                        "order": 3,
-                        "markdownDescription": "Base color when `#claudeContextBar.autoColor#` is off. Each project gets a subtle variation of this color."
-                    },
-                    "claudeContextBar.compactMode": {
-                        "type": "boolean",
-                        "default": false,
-                        "order": 4,
-                        "markdownDescription": "Shorten project names to save status bar space. Multi-word names become acronyms (`my-cool-project` → `MCP`), single words become abbreviated (`typescript` → `Tscript`). Names ≤5 chars stay unchanged."
-                    },
-                    "claudeContextBar.shortNames": {
-                        "type": "object",
-                        "default": {},
-                        "order": 5,
-                        "markdownDescription": "Custom short names for projects. Keys are project names, values are the short versions, e.g. `{\"my-cool-project\": \"MCP\", \"webapp\": \"WA\"}`."
-                    },
-                    "claudeContextBar.label": {
-                        "type": "string",
-                        "enum": [
-                            "project",
-                            "session"
-                        ],
-                        "enumDescriptions": [
-                            "Show the project folder name",
-                            "Show the Claude Code session title (from /rename or the generated summary)"
-                        ],
-                        "default": "project",
                         "order": 6,
-                        "description": "What to show as the status bar name. Hover always includes the session title when Claude Code has written one."
-                    },
-                    "claudeContextBar.usageFormat": {
-                        "type": "string",
-                        "enum": [
-                            "percent",
-                            "tokens"
-                        ],
-                        "enumDescriptions": [
-                            "Show usage as a percent of the model context window",
-                            "Show usage as an absolute token count (e.g. 185K)"
-                        ],
-                        "default": "tokens",
-                        "order": 7,
-                        "markdownDescription": "How to show context usage on the status bar. Warning and danger colors are unaffected: they always use the absolute token counts in `#claudeContextBar.warningTokens#` and `#claudeContextBar.dangerTokens#`."
+                        "markdownDescription": "Base color when `#claudeContextBar.autoColor#` is off. Each project gets a subtle variation of this color."
                     }
                 }
             },
@@ -146,20 +132,6 @@
                         "minimum": 0,
                         "order": 4,
                         "markdownDescription": "Tokens consumed at which to show danger color (red). An absolute token count, not a percentage. Set `0` to disable the danger color. Should be higher than `#claudeContextBar.warningTokens#`; if it is not, only the danger color appears."
-                    },
-                    "claudeContextBar.warningThreshold": {
-                        "type": "number",
-                        "default": 50,
-                        "order": 5,
-                        "description": "Percentage of the context window at which to show warning color (yellow)",
-                        "deprecationMessage": "No longer used. Replaced by claudeContextBar.warningTokens, which is measured in tokens rather than percent: a percentage is not comparable across models with different context window sizes."
-                    },
-                    "claudeContextBar.dangerThreshold": {
-                        "type": "number",
-                        "default": 75,
-                        "order": 6,
-                        "description": "Percentage of the context window at which to show danger color (red)",
-                        "deprecationMessage": "No longer used. Replaced by claudeContextBar.dangerTokens, which is measured in tokens rather than percent: a percentage is not comparable across models with different context window sizes."
                     }
                 }
             },
@@ -210,11 +182,17 @@
                         "maximum": 9999999,
                         "order": 2,
                         "description": "Seconds of inactivity before hiding a session (default: 180 / 3 minutes). Set 0 to never hide idle sessions. Click to manually hide."
-                    },
+                    }
+                }
+            },
+            {
+                "title": "Data Source",
+                "order": 5,
+                "properties": {
                     "claudeContextBar.configDir": {
                         "type": "string",
                         "default": "",
-                        "order": 3,
+                        "order": 1,
                         "description": "Claude Code config directory — the folder that contains projects/, not projects/ itself. Leave empty to use the CLAUDE_CONFIG_DIR environment variable, then ~/.claude. Set this if VS Code does not inherit your shell environment (common when launched from the Start Menu or Finder)."
                     }
                 }
