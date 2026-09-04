@@ -55,21 +55,20 @@ const NAME_SEGMENTS = 3;
 export function decodeProjectPath(encodedName: string): ProjectPath {
     let decoded = encodedName;
 
-    // Remove leading dash if present
     if (decoded.startsWith('-')) {
         decoded = decoded.substring(1);
     }
 
-    // Split by dashes and filter out empty strings (from double-dashes)
     const parts = decoded.split('-').filter(p => p.length > 0);
     let fullPath: string;
 
-    // Check if Windows pattern (first part is single drive letter like 'c', 'd', etc.)
+    // A one-letter first segment is taken as a drive letter. Nothing in the
+    // encoding marks a Windows name as such, and a real folder named `a` at the
+    // root of a Unix path would be read the same way; that path is rare enough
+    // to be worth trading for recognising every Windows project.
     if (parts.length > 0 && parts[0].length === 1 && /[a-zA-Z]/.test(parts[0])) {
-        // Windows path: C--dev-my-cool-project -> C:\dev\my-cool-project
         fullPath = parts[0].toUpperCase() + ':\\' + parts.slice(1).join('\\');
     } else {
-        // Unix path: -Users-ed-work-app -> /Users/ed/work/app
         fullPath = '/' + parts.join('/');
     }
 

@@ -151,7 +151,16 @@ function recentSessionFiles(files: SessionFiles, projectDir: string, cutoff: num
         // against the cutoff at all, and any stand-in value would be a guess
         // about how stale the file is — see `SessionFiles`.
         .filter((file): file is RecentFile => file.mtime !== null)
-        .filter(file => file.mtime > cutoff);
+        .filter(file => file.mtime > cutoff)
+        // Newest first, and not for the scan's own sake: `selectActiveSessions`
+        // sorts on `createdAt` alone, and both of its sorts are stable, so two
+        // sessions of one project that tie there — the epoch both an unparseable
+        // and a missing creation time read as — keep whatever order the scan
+        // pushed them in. That order decides which of them takes the bare
+        // project name and which gets the `-2` suffix, so leaving it to the
+        // directory listing would make the display name depend on the
+        // filesystem. Most recently touched wins the tie instead.
+        .sort((a, b) => b.mtime - a.mtime);
 }
 
 /**

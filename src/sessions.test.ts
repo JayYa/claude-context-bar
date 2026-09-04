@@ -625,6 +625,32 @@ describe('scanActiveSessions — Superseded sessions and numbering', () => {
         assert.equal(nameOf('newer.jsonl'), 'webapp-2');
     });
 
+    it('gives the bare name to the more recently touched of two sessions with no creation time', () => {
+        // Both creation times read as the epoch, so the numbering has nothing
+        // to order them by and the scan's own order decides. Listed here
+        // stalest-first, the order a directory listing is free to hand back:
+        // the answer must not follow it.
+        const untimed = [
+            line({ type: 'user', message: { content: 'do the thing' } }),
+            line({ type: 'assistant', message: { model: 'claude-opus-5', usage: { input_tokens: 12_000 } } }),
+        ].join('\n');
+
+        const sessions = scan({
+            '-home-dev-webapp': {
+                'stale.jsonl': { mtime: minutesAgo(2), text: untimed },
+                'fresh.jsonl': { mtime: minutesAgo(1), text: untimed },
+            },
+        });
+
+        const nameOf = (fileName: string) =>
+            sessions.find(s => s.sessionFile.endsWith(fileName))!.projectName;
+
+        assert.equal(sessions.length, 2);
+        assert.equal(sessions.every(s => s.sessionCreated === null), true);
+        assert.equal(nameOf('fresh.jsonl'), 'webapp');
+        assert.equal(nameOf('stale.jsonl'), 'webapp-2');
+    });
+
     it('drops a session that ended on a /clear and keeps the rest', () => {
         const sessions = scan({
             '-home-dev-webapp': {

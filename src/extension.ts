@@ -358,41 +358,51 @@ function getShortName(projectName: string, customNames: Record<string, string>):
  */
 function nodeSessionFiles(projectsDir: string): SessionFiles {
     return {
-        listProjectDirs() {
-            try {
-                return fs.readdirSync(projectsDir).filter(name => {
-                    try {
-                        return fs.statSync(path.join(projectsDir, name)).isDirectory();
-                    } catch {
-                        return false;
-                    }
-                });
-            } catch {
-                return [];
-            }
-        },
-        listSessionFiles(projectDir) {
-            try {
-                return fs.readdirSync(path.join(projectsDir, projectDir));
-            } catch {
-                return [];
-            }
-        },
-        mtimeOf(projectDir, fileName) {
-            try {
-                return fs.statSync(path.join(projectsDir, projectDir, fileName)).mtime.getTime();
-            } catch {
-                return null;
-            }
-        },
-        readText(projectDir, fileName) {
-            try {
-                return fs.readFileSync(path.join(projectsDir, projectDir, fileName), 'utf-8');
-            } catch {
-                return null;
-            }
-        },
+        listProjectDirs: () => orFallback(
+            () => fs.readdirSync(projectsDir).filter(name => isDirectory(path.join(projectsDir, name))),
+            [],
+        ),
+        listSessionFiles: (projectDir) => orFallback(
+            () => fs.readdirSync(path.join(projectsDir, projectDir)),
+            [],
+        ),
+        mtimeOf: (projectDir, fileName) => orFallback(
+            () => fs.statSync(path.join(projectsDir, projectDir, fileName)).mtime.getTime(),
+            null,
+        ),
+        readText: (projectDir, fileName) => orFallback(
+            () => fs.readFileSync(path.join(projectsDir, projectDir, fileName), 'utf-8'),
+            null,
+        ),
     };
+}
+
+/**
+ * One `fs` read with the port's no-throw promise kept: what the read answers,
+ * or `fallback` when it throws.
+ *
+ * Written once so that a fifth method added to `SessionFiles` cannot quietly
+ * forget it. The fallback is what that method's return type already documents
+ * as "could not read" — `[]` or `null` — so each adapter method reads as the
+ * one line of `fs` it is, with its failure answer beside it.
+ */
+function orFallback<T, F>(read: () => T, fallback: F): T | F {
+    try {
+        return read();
+    } catch {
+        return fallback;
+    }
+}
+
+/**
+ * Whether one path is a directory, an unreadable entry counting as not one.
+ *
+ * Per entry rather than around the whole listing: one entry the process may
+ * not stat — a stale symlink, a directory it lacks permission on — must skip
+ * only itself and leave the rest of the projects listed.
+ */
+function isDirectory(fullPath: string): boolean {
+    return orFallback(() => fs.statSync(fullPath).isDirectory(), false);
 }
 
 /**
