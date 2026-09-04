@@ -204,7 +204,6 @@
         "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
         "compile": "tsc -p ./",
         "watch": "tsc -watch -p ./",
-        "lint": "eslint src --ext ts",
         "test": "tsc -p ./ && node --test out/*.test.js",
         "package": "vsce package",
         "publish": "vsce publish"
