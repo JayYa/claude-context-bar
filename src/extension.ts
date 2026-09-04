@@ -7,6 +7,7 @@ import { getContextTokenLevel } from './contextThreshold';
 import { getUsage, UsageData, UsageMeter } from './usage';
 import { parseTranscript, splitTranscriptLines } from './transcript';
 import { selectActiveSessions, SessionInfo } from './sessions';
+import { SessionFiles } from './sessionFiles';
 import {
     claudeProjectsDir,
     hasExplicitConfigDir,
@@ -400,13 +401,58 @@ function getShortName(projectName: string, customNames: Record<string, string>):
     return shortBase + sessionSuffix;
 }
 
+/**
+ * Node's `fs` behind the `SessionFiles` port, bound to one projects directory.
+ *
+ * An object literal in the extension entry point rather than a module of its
+ * own: this is the last inch of the wiring, and the entry point is already
+ * where this extension's contact with `fs` and `vscode` is supposed to live.
+ * Every method swallows its errors, because the port promises not to throw —
+ * see `SessionFiles` for why that promise is worth more than the exception.
+ */
+function nodeSessionFiles(projectsDir: string): SessionFiles {
+    return {
+        listProjectDirs() {
+            try {
+                return fs.readdirSync(projectsDir).filter(name => {
+                    try {
+                        return fs.statSync(path.join(projectsDir, name)).isDirectory();
+                    } catch {
+                        return false;
+                    }
+                });
+            } catch {
+                return [];
+            }
+        },
+        listSessionFiles(projectDir) {
+            try {
+                return fs.readdirSync(path.join(projectsDir, projectDir));
+            } catch {
+                return [];
+            }
+        },
+        mtimeOf(projectDir, fileName) {
+            try {
+                return fs.statSync(path.join(projectsDir, projectDir, fileName)).mtime.getTime();
+            } catch {
+                return null;
+            }
+        },
+        readText(projectDir, fileName) {
+            try {
+                return fs.readFileSync(path.join(projectsDir, projectDir, fileName), 'utf-8');
+            } catch {
+                return null;
+            }
+        },
+    };
+}
+
 async function findActiveSessions(settings: Settings): Promise<SessionInfo[]> {
     const sessions: SessionInfo[] = [];
     const claudeDir = getClaudeProjectsDir(settings);
-
-    if (!fs.existsSync(claudeDir)) {
-        return sessions;
-    }
+    const files = nodeSessionFiles(claudeDir);
 
     const { contextLimit, modelContextLimits, idleTimeout } = settings;
 
@@ -414,78 +460,67 @@ async function findActiveSessions(settings: Settings): Promise<SessionInfo[]> {
     // idleTimeout of 0 (or negative) disables the timeout: sessions never go stale
     const cutoffTime = idleTimeout > 0 ? Date.now() - (idleTimeout * 1000) : 0;
 
-    try {
-        const projectDirs = fs.readdirSync(claudeDir);
+    // A missing projects directory needs no check of its own: it lists as empty,
+    // and an empty list of projects yields an empty status bar.
+    const projectDirs = files.listProjectDirs();
 
-        for (const projectDir of projectDirs) {
-            const projectPath = path.join(claudeDir, projectDir);
-            const stat = fs.statSync(projectPath);
+    for (const projectDir of projectDirs) {
+        // Skip Claude Memory and plugin directories (background agents, not interactive sessions)
+        if (projectDir.includes('claude-plugins') || projectDir.includes('claude-mem')) continue;
 
-            if (!stat.isDirectory()) continue;
+        // Find JSONL files modified within cutoff time
+        const entries = files.listSessionFiles(projectDir)
+            .filter(f => f.endsWith('.jsonl'))
+            // Skip agent files (claude-mem background processes)
+            .filter(f => !f.startsWith('agent-'))
+            .map(f => ({ name: f, mtime: files.mtimeOf(projectDir, f) }))
+            // An unreadable mtime drops just this one file. It cannot be
+            // compared against the cutoff at all, and any stand-in value would
+            // be a guess about how stale the file is — see `SessionFiles`.
+            .filter((f): f is { name: string; mtime: number } => f.mtime !== null)
+            .filter(f => f.mtime > cutoffTime)
+            .sort((a, b) => b.mtime - a.mtime);
 
-            // Skip Claude Memory and plugin directories (background agents, not interactive sessions)
-            if (projectDir.includes('claude-plugins') || projectDir.includes('claude-mem')) continue;
+        if (entries.length === 0) continue;
 
-            // Find JSONL files modified within cutoff time
-            const files = fs.readdirSync(projectPath)
-                .filter(f => f.endsWith('.jsonl'))
-                // Skip agent files (claude-mem background processes)
-                .filter(f => !f.startsWith('agent-'))
-                .map(f => ({
-                    name: f,
-                    path: path.join(projectPath, f),
-                    mtime: fs.statSync(path.join(projectPath, f)).mtime
-                }))
-                .filter(f => f.mtime.getTime() > cutoffTime)
-                .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+        // Get token count from EACH active session file (1 per Claude Code tab)
+        for (const entry of entries) {
+            // A file that will not read is skipped rather than raised: the port
+            // answers with no text instead of throwing, which is what keeps one
+            // bad session file from abandoning every project the scan has not
+            // reached yet and wiping their status bar items.
+            const text = files.readText(projectDir, entry.name);
+            if (text === null) continue;
 
-            if (files.length === 0) continue;
+            const transcript = parseTranscript(splitTranscriptLines(text));
 
-            // Get token count from EACH active session file (1 per Claude Code tab)
-            for (const file of files) {
-                // Read inside its own try/catch: the outer try around the whole
-                // scan would catch a read failure too, but it would also abandon
-                // every project still unvisited, wiping their status bar items.
-                // Catching here keeps the blast radius at this one session.
-                let lines: string[];
-                try {
-                    lines = splitTranscriptLines(fs.readFileSync(file.path, 'utf-8'));
-                } catch {
-                    continue;
-                }
-
-                const transcript = parseTranscript(lines);
-
-                if (transcript.totalTokens > 0) {
-                    const { name, fullPath } = decodeProjectPath(projectDir);
-                    // Extract short session ID from filename
-                    const sessionId = file.name.replace('.jsonl', '').substring(0, 8);
-                    // Auto-detect context limit based on model
-                    const sessionContextLimit = getContextLimitForModel(transcript.model, contextLimit, modelContextLimits);
-                    sessions.push({
-                        projectName: name,
-                        baseProjectName: name,
-                        sessionTitle: transcript.sessionTitle,
-                        projectPath: fullPath,
-                        sessionId,
-                        sessionFile: file.path,
-                        inputTokens: transcript.inputTokens,
-                        cacheReadTokens: transcript.cacheReadTokens,
-                        cacheCreationTokens: transcript.cacheCreationTokens,
-                        totalTokens: transcript.totalTokens,
-                        percentage: Math.round((transcript.totalTokens / sessionContextLimit) * 100),
-                        lastUpdated: file.mtime,
-                        model: transcript.model,
-                        contextLimit: sessionContextLimit,
-                        firstMessage: transcript.firstMessage,
-                        sessionCreated: transcript.sessionCreated,
-                        wasCleared: transcript.wasCleared
-                    });
-                }
+            if (transcript.totalTokens > 0) {
+                const { name, fullPath } = decodeProjectPath(projectDir);
+                // Extract short session ID from filename
+                const sessionId = entry.name.replace('.jsonl', '').substring(0, 8);
+                // Auto-detect context limit based on model
+                const sessionContextLimit = getContextLimitForModel(transcript.model, contextLimit, modelContextLimits);
+                sessions.push({
+                    projectName: name,
+                    baseProjectName: name,
+                    sessionTitle: transcript.sessionTitle,
+                    projectPath: fullPath,
+                    sessionId,
+                    sessionFile: path.join(claudeDir, projectDir, entry.name),
+                    inputTokens: transcript.inputTokens,
+                    cacheReadTokens: transcript.cacheReadTokens,
+                    cacheCreationTokens: transcript.cacheCreationTokens,
+                    totalTokens: transcript.totalTokens,
+                    percentage: Math.round((transcript.totalTokens / sessionContextLimit) * 100),
+                    lastUpdated: new Date(entry.mtime),
+                    model: transcript.model,
+                    contextLimit: sessionContextLimit,
+                    firstMessage: transcript.firstMessage,
+                    sessionCreated: transcript.sessionCreated,
+                    wasCleared: transcript.wasCleared
+                });
             }
         }
-    } catch (e) {
-        console.error('Error scanning Claude projects:', e);
     }
 
     // Which of the scanned sessions to show, and what to call each one.
