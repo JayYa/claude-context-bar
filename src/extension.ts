@@ -7,6 +7,7 @@ import { getContextTokenLevel } from './contextThreshold';
 import { getUsage, UsageData, UsageMeter } from './usage';
 import { parseTranscript, splitTranscriptLines } from './transcript';
 import { selectActiveSessions, SessionInfo } from './sessions';
+import { decodeProjectPath } from './projectPath';
 import {
     claudeProjectsDir,
     hasExplicitConfigDir,
@@ -234,59 +235,6 @@ function updateMissingDirItem(settings: Settings) {
         `or set the \`CLAUDE_CONFIG_DIR\` environment variable.`
     );
     missingDirItem.show();
-}
-
-function decodeProjectPath(encodedName: string): { name: string; fullPath: string } {
-    // Claude encodes paths like: C--dev-my-cool-project or -Users-name-work-my-project
-    // The double-dash after drive letter represents the colon (C: -> C--)
-    // Single dashes represent path separators, BUT folder names can also contain dashes
-    // 
-    // Strategy: Detect OS from the pattern and reconstruct path
-    let decoded = encodedName;
-
-    // Remove leading dash if present
-    if (decoded.startsWith('-')) {
-        decoded = decoded.substring(1);
-    }
-
-    // Split by dashes and filter out empty strings (from double-dashes)
-    const parts = decoded.split('-').filter(p => p.length > 0);
-    let fullPath: string;
-    let projectName: string;
-
-    // Check if Windows pattern (first part is single drive letter like 'c', 'd', etc.)
-    if (parts.length > 0 && parts[0].length === 1 && /[a-zA-Z]/.test(parts[0])) {
-        // Windows path: C:\dev\my-cool-project
-        // Claude typically encodes as: C--dev-my-cool-project
-        // After filtering empty strings: ['C', 'dev', 'my', 'cool', 'project']
-        fullPath = parts[0].toUpperCase() + ':\\' + parts.slice(1).join('\\');
-
-        // Project name: use last few segments only (not full path chain)
-        // For C:\dev\webapp -> parts = ['C', 'dev', 'webapp'] -> projectName = 'webapp'
-        // For C:\dev\tools\extensions\vscode\my-extension -> use last 3 parts -> 'my-extension'
-        if (parts.length >= 3) {
-            // Skip drive letter and first folder, but limit to last 3 segments for deeply nested paths
-            const startIndex = Math.max(2, parts.length - 3);
-            const projectParts = parts.slice(startIndex);
-            projectName = projectParts.join('-');
-        } else {
-            projectName = parts[parts.length - 1] || 'Unknown';
-        }
-    } else {
-        // Unix path: /Users/Ed/work/my-project
-        fullPath = '/' + parts.join('/');
-
-        // Similar heuristic for Unix
-        if (parts.length >= 3) {
-            // Skip common prefixes like Users, home, etc.
-            const projectParts = parts.slice(Math.max(2, parts.length - 3));
-            projectName = projectParts.join('-');
-        } else {
-            projectName = parts[parts.length - 1] || 'Unknown';
-        }
-    }
-
-    return { name: projectName, fullPath };
 }
 
 // Fuzzy emoji matching based on project name
