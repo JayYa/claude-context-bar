@@ -2,13 +2,9 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { getContextLimitForModel } from './contextLimit';
 import { getContextTokenLevel } from './contextThreshold';
 import { getUsage, UsageData, UsageMeter } from './usage';
-import { parseTranscript, splitTranscriptLines } from './transcript';
-import { selectActiveSessions, SessionInfo } from './sessions';
-import { decodeProjectPath } from './projectPath';
-import { SessionFiles } from './sessionFiles';
+import { scanActiveSessions, SessionFiles, SessionInfo } from './sessions';
 import {
     claudeProjectsDir,
     hasExplicitConfigDir,
@@ -44,6 +40,8 @@ let usageData: UsageData | null = null;
 let usageTimer: NodeJS.Timeout | null = null;
 
 const STATUS_BAR_PRIORITY_BASE = 900;
+/** How many session items the status bar will show before it stops. */
+const MAX_STATUS_BAR_SESSIONS = 5;
 const ITEM_CLAUDE_ICON = '✴️';
 
 const PASTEL_PALETTE = [
@@ -397,82 +395,23 @@ function nodeSessionFiles(projectsDir: string): SessionFiles {
     };
 }
 
-async function findActiveSessions(settings: Settings): Promise<SessionInfo[]> {
-    const sessions: SessionInfo[] = [];
-    const claudeDir = getClaudeProjectsDir(settings);
-    const files = nodeSessionFiles(claudeDir);
-
-    const { contextLimit, modelContextLimits, idleTimeout } = settings;
-
-    // Only look at sessions modified within the idle timeout (active sessions)
-    // idleTimeout of 0 (or negative) disables the timeout: sessions never go stale
-    const cutoffTime = idleTimeout > 0 ? Date.now() - (idleTimeout * 1000) : 0;
-
-    // A missing projects directory needs no check of its own: it lists as empty,
-    // and an empty list of projects yields an empty status bar.
-    const projectDirs = files.listProjectDirs();
-
-    for (const projectDir of projectDirs) {
-        // Skip Claude Memory and plugin directories (background agents, not interactive sessions)
-        if (projectDir.includes('claude-plugins') || projectDir.includes('claude-mem')) continue;
-
-        // Find JSONL files modified within cutoff time
-        const entries = files.listSessionFiles(projectDir)
-            .filter(f => f.endsWith('.jsonl'))
-            // Skip agent files (claude-mem background processes)
-            .filter(f => !f.startsWith('agent-'))
-            .map(f => ({ name: f, mtime: files.mtimeOf(projectDir, f) }))
-            // An unreadable mtime drops just this one file. It cannot be
-            // compared against the cutoff at all, and any stand-in value would
-            // be a guess about how stale the file is — see `SessionFiles`.
-            .filter((f): f is { name: string; mtime: number } => f.mtime !== null)
-            .filter(f => f.mtime > cutoffTime)
-            .sort((a, b) => b.mtime - a.mtime);
-
-        if (entries.length === 0) continue;
-
-        // Get token count from EACH active session file (1 per Claude Code tab)
-        for (const entry of entries) {
-            // A file that will not read is skipped rather than raised: the port
-            // answers with no text instead of throwing, which is what keeps one
-            // bad session file from abandoning every project the scan has not
-            // reached yet and wiping their status bar items.
-            const text = files.readText(projectDir, entry.name);
-            if (text === null) continue;
-
-            const transcript = parseTranscript(splitTranscriptLines(text));
-
-            if (transcript.totalTokens > 0) {
-                const { name, fullPath } = decodeProjectPath(projectDir);
-                // Extract short session ID from filename
-                const sessionId = entry.name.replace('.jsonl', '').substring(0, 8);
-                // Auto-detect context limit based on model
-                const sessionContextLimit = getContextLimitForModel(transcript.model, contextLimit, modelContextLimits);
-                sessions.push({
-                    projectName: name,
-                    baseProjectName: name,
-                    sessionTitle: transcript.sessionTitle,
-                    projectPath: fullPath,
-                    sessionId,
-                    sessionFile: path.join(claudeDir, projectDir, entry.name),
-                    inputTokens: transcript.inputTokens,
-                    cacheReadTokens: transcript.cacheReadTokens,
-                    cacheCreationTokens: transcript.cacheCreationTokens,
-                    totalTokens: transcript.totalTokens,
-                    percentage: Math.round((transcript.totalTokens / sessionContextLimit) * 100),
-                    lastUpdated: new Date(entry.mtime),
-                    model: transcript.model,
-                    contextLimit: sessionContextLimit,
-                    firstMessage: transcript.firstMessage,
-                    sessionCreated: transcript.sessionCreated,
-                    wasCleared: transcript.wasCleared
-                });
-            }
-        }
-    }
-
-    // Which of the scanned sessions to show, and what to call each one.
-    const activeSessions = selectActiveSessions(sessions);
+/**
+ * The sessions to render this refresh: what the scan found, ordered for the
+ * bar, with the user's hidden ones removed and the list cut to size.
+ *
+ * Everything left here is a display decision. Which sessions count at all —
+ * the idle cutoff, the exclusions, the percentages, the Superseded rules —
+ * lives behind `scanActiveSessions`, which is handed this window's Settings
+ * snapshot and the current time rather than reaching for either itself.
+ */
+function findActiveSessions(settings: Settings): SessionInfo[] {
+    const projectsDir = getClaudeProjectsDir(settings);
+    const activeSessions = scanActiveSessions(
+        projectsDir,
+        settings,
+        nodeSessionFiles(projectsDir),
+        Date.now(),
+    );
 
     // Sort by mtime for display order (most recent first)
     activeSessions.sort((a, b) => b.lastUpdated.getTime() - a.lastUpdated.getTime());
@@ -492,7 +431,7 @@ async function findActiveSessions(settings: Settings): Promise<SessionInfo[]> {
         return true; // Not hidden
     });
 
-    return visibleSessions.slice(0, 5);
+    return visibleSessions.slice(0, MAX_STATUS_BAR_SESSIONS);
 }
 
 function displayNamesForSessions(
@@ -640,12 +579,12 @@ function pruneStaleItems(seenPaths: Set<string>) {
     }
 }
 
-async function refreshAllSessions() {
+function refreshAllSessions() {
     const settings = currentSettings();
     ensureFileWatcher(settings);
     updateMissingDirItem(settings);
 
-    const sessions = await findActiveSessions(settings);
+    const sessions = findActiveSessions(settings);
     const { warningTokens, dangerTokens, showEmoji } = settings;
     const displayNames = displayNamesForSessions(
         sessions,
