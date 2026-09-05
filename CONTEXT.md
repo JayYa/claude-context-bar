@@ -61,6 +61,13 @@ A session deliberately not shown even though its file is recent. One concept, tw
 明明文件很新、却被有意不显示的会话。一个概念、两条判据：会话以 `/clear` 收尾且其后再无内容，或同一项目下有更新的会话创建于本会话最后一次更新之后——用户已经走开了。对状态栏而言两者含义相同，不要分别命名。
 _Avoid_: Ghost session, Dead session, Stale session, Abandoned session / 幽灵会话、僵尸会话、过期会话
 
+### Display concepts 显示概念
+
+**Bar item（条目描述）**:
+The complete plain-data description of what one status bar item should look like — its text, its color, its background level, the raw markdown of its tooltip, the command a click runs, and the key it is reused under. A Bar item is a description, not a `vscode.StatusBarItem`; something else takes the description and makes the vscode object match it. Distinct from Active session: Active session decides *which* sessions the status bar shows, Bar item decides *what one item looks like*.
+一个状态栏条目该显示成什么样的完整纯数据描述：文字、颜色、背景级别、tooltip 原文、点击执行的命令，以及复用时所用的 key。Bar item 是描述，不是 `vscode.StatusBarItem`；由别处拿着这份描述去让 vscode 对象与之一致。与 Active session 不同：Active session 决定状态栏*显示哪些*会话，Bar item 决定*一个条目显示成什么样*。
+_Avoid_: Item, Widget, Spec / 条目、部件
+
 ### Related distinctions 易混概念
 
 **Context limit（上下文额度）**:
