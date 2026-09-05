@@ -1,45 +1,11 @@
 /**
- * Pure helpers for status bar labels, session titles, and usage display.
+ * Pure helpers for status bar labels and usage display.
  * Kept free of vscode so they can be unit-tested.
  */
 
-export type StatusBarLabel = 'project' | 'session';
+import { StatusBarLabel } from './settings';
 
 export const STATUS_BAR_NAME_MAX = 24;
-
-function firstNonEmptyString(...vals: unknown[]): string {
-    for (const v of vals) {
-        if (typeof v === 'string' && v.trim()) {
-            return v.trim();
-        }
-    }
-    return '';
-}
-
-/**
- * Read title fields from a Claude Code JSONL entry.
- * custom-title (from /rename or -n) and ai-title (generated summary) are the
- * two types Claude Code writes; field names are tolerated loosely.
- */
-export function readTitleFromEntry(entry: any): { customTitle?: string; aiTitle?: string } {
-    if (!entry || typeof entry !== 'object') {
-        return {};
-    }
-    if (entry.type === 'custom-title') {
-        const customTitle = firstNonEmptyString(entry.customTitle, entry.title, entry.name);
-        return customTitle ? { customTitle } : {};
-    }
-    if (entry.type === 'ai-title') {
-        const aiTitle = firstNonEmptyString(entry.aiTitle, entry.title);
-        return aiTitle ? { aiTitle } : {};
-    }
-    return {};
-}
-
-/** Prefer a user-chosen name over the generated title. */
-export function pickSessionTitle(customTitle: string, aiTitle: string): string {
-    return firstNonEmptyString(customTitle, aiTitle);
-}
 
 export function truncateLabel(text: string, max: number = STATUS_BAR_NAME_MAX): string {
     const t = text.trim();

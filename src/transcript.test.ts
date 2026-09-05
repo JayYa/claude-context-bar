@@ -316,6 +316,62 @@ describe('parseTranscript — session title', () => {
 
         assert.equal(transcript.sessionTitle, '');
     });
+
+    it('accepts the `title` and `name` spellings on a custom title', () => {
+        assert.equal(
+            parseTranscript([line({ type: 'custom-title', title: 'plan-name' })]).sessionTitle,
+            'plan-name',
+        );
+        assert.equal(
+            parseTranscript([line({ type: 'custom-title', name: 'flag-name' })]).sessionTitle,
+            'flag-name',
+        );
+    });
+
+    it('accepts the `title` spelling on a generated title', () => {
+        const transcript = parseTranscript([line({ type: 'ai-title', title: 'Fixing the parser' })]);
+
+        assert.equal(transcript.sessionTitle, 'Fixing the parser');
+    });
+
+    it('trims the title it reads', () => {
+        const transcript = parseTranscript([line({ type: 'custom-title', customTitle: '  Parser work  ' })]);
+
+        assert.equal(transcript.sessionTitle, 'Parser work');
+    });
+
+    it('ignores title-looking fields on other entry kinds', () => {
+        const transcript = parseTranscript([
+            line({ type: 'agent-name', name: 'reviewer', title: 'Not a title' }),
+            userLine('hello'),
+        ]);
+
+        assert.equal(transcript.sessionTitle, '');
+    });
+
+    it('ignores a blank custom title and falls back to the generated one', () => {
+        const transcript = parseTranscript([
+            line({ type: 'ai-title', aiTitle: 'Fixing the parser' }),
+            line({ type: 'custom-title', customTitle: '   ' }),
+        ]);
+
+        assert.equal(transcript.sessionTitle, 'Fixing the parser');
+    });
+
+    it('ignores a blank generated title', () => {
+        const transcript = parseTranscript([line({ type: 'ai-title', aiTitle: '  ' })]);
+
+        assert.equal(transcript.sessionTitle, '');
+    });
+
+    it('keeps an earlier title when a later entry of the same kind is blank', () => {
+        const transcript = parseTranscript([
+            line({ type: 'custom-title', customTitle: 'Parser work' }),
+            line({ type: 'custom-title', customTitle: '' }),
+        ]);
+
+        assert.equal(transcript.sessionTitle, 'Parser work');
+    });
 });
 
 describe('parseTranscript — diagnostics', () => {
