@@ -2,11 +2,9 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { getContextLimitForModel } from './contextLimit';
 import { getContextTokenLevel } from './contextThreshold';
 import { getUsage, UsageData, UsageMeter } from './usage';
-import { parseTranscript, splitTranscriptLines } from './transcript';
-import { selectActiveSessions, SessionInfo } from './sessions';
+import { scanActiveSessions, SessionFiles, SessionInfo } from './sessions';
 import {
     claudeProjectsDir,
     hasExplicitConfigDir,
@@ -42,6 +40,8 @@ let usageData: UsageData | null = null;
 let usageTimer: NodeJS.Timeout | null = null;
 
 const STATUS_BAR_PRIORITY_BASE = 900;
+/** How many session items the status bar will show before it stops. */
+const MAX_STATUS_BAR_SESSIONS = 5;
 const ITEM_CLAUDE_ICON = '✴️';
 
 const PASTEL_PALETTE = [
@@ -236,59 +236,6 @@ function updateMissingDirItem(settings: Settings) {
     missingDirItem.show();
 }
 
-function decodeProjectPath(encodedName: string): { name: string; fullPath: string } {
-    // Claude encodes paths like: C--dev-my-cool-project or -Users-name-work-my-project
-    // The double-dash after drive letter represents the colon (C: -> C--)
-    // Single dashes represent path separators, BUT folder names can also contain dashes
-    // 
-    // Strategy: Detect OS from the pattern and reconstruct path
-    let decoded = encodedName;
-
-    // Remove leading dash if present
-    if (decoded.startsWith('-')) {
-        decoded = decoded.substring(1);
-    }
-
-    // Split by dashes and filter out empty strings (from double-dashes)
-    const parts = decoded.split('-').filter(p => p.length > 0);
-    let fullPath: string;
-    let projectName: string;
-
-    // Check if Windows pattern (first part is single drive letter like 'c', 'd', etc.)
-    if (parts.length > 0 && parts[0].length === 1 && /[a-zA-Z]/.test(parts[0])) {
-        // Windows path: C:\dev\my-cool-project
-        // Claude typically encodes as: C--dev-my-cool-project
-        // After filtering empty strings: ['C', 'dev', 'my', 'cool', 'project']
-        fullPath = parts[0].toUpperCase() + ':\\' + parts.slice(1).join('\\');
-
-        // Project name: use last few segments only (not full path chain)
-        // For C:\dev\webapp -> parts = ['C', 'dev', 'webapp'] -> projectName = 'webapp'
-        // For C:\dev\tools\extensions\vscode\my-extension -> use last 3 parts -> 'my-extension'
-        if (parts.length >= 3) {
-            // Skip drive letter and first folder, but limit to last 3 segments for deeply nested paths
-            const startIndex = Math.max(2, parts.length - 3);
-            const projectParts = parts.slice(startIndex);
-            projectName = projectParts.join('-');
-        } else {
-            projectName = parts[parts.length - 1] || 'Unknown';
-        }
-    } else {
-        // Unix path: /Users/Ed/work/my-project
-        fullPath = '/' + parts.join('/');
-
-        // Similar heuristic for Unix
-        if (parts.length >= 3) {
-            // Skip common prefixes like Users, home, etc.
-            const projectParts = parts.slice(Math.max(2, parts.length - 3));
-            projectName = projectParts.join('-');
-        } else {
-            projectName = parts[parts.length - 1] || 'Unknown';
-        }
-    }
-
-    return { name: projectName, fullPath };
-}
-
 // Fuzzy emoji matching based on project name
 function getEmojiForProject(projectName: string): string {
     const name = projectName.toLowerCase();
@@ -400,96 +347,81 @@ function getShortName(projectName: string, customNames: Record<string, string>):
     return shortBase + sessionSuffix;
 }
 
-async function findActiveSessions(settings: Settings): Promise<SessionInfo[]> {
-    const sessions: SessionInfo[] = [];
-    const claudeDir = getClaudeProjectsDir(settings);
+/**
+ * Node's `fs` behind the `SessionFiles` port, bound to one projects directory.
+ *
+ * An object literal in the extension entry point rather than a module of its
+ * own: this is the last inch of the wiring, and the entry point is already
+ * where this extension's contact with `fs` and `vscode` is supposed to live.
+ * Every method swallows its errors, because the port promises not to throw —
+ * see `SessionFiles` for why that promise is worth more than the exception.
+ */
+function nodeSessionFiles(projectsDir: string): SessionFiles {
+    return {
+        listProjectDirs: () => orFallback(
+            () => fs.readdirSync(projectsDir).filter(name => isDirectory(path.join(projectsDir, name))),
+            [],
+        ),
+        listSessionFiles: (projectDir) => orFallback(
+            () => fs.readdirSync(path.join(projectsDir, projectDir)),
+            [],
+        ),
+        mtimeOf: (projectDir, fileName) => orFallback(
+            () => fs.statSync(path.join(projectsDir, projectDir, fileName)).mtime.getTime(),
+            null,
+        ),
+        readText: (projectDir, fileName) => orFallback(
+            () => fs.readFileSync(path.join(projectsDir, projectDir, fileName), 'utf-8'),
+            null,
+        ),
+    };
+}
 
-    if (!fs.existsSync(claudeDir)) {
-        return sessions;
-    }
-
-    const { contextLimit, modelContextLimits, idleTimeout } = settings;
-
-    // Only look at sessions modified within the idle timeout (active sessions)
-    // idleTimeout of 0 (or negative) disables the timeout: sessions never go stale
-    const cutoffTime = idleTimeout > 0 ? Date.now() - (idleTimeout * 1000) : 0;
-
+/**
+ * One `fs` read with the port's no-throw promise kept: what the read answers,
+ * or `fallback` when it throws.
+ *
+ * Written once so that a fifth method added to `SessionFiles` cannot quietly
+ * forget it. The fallback is what that method's return type already documents
+ * as "could not read" — `[]` or `null` — so each adapter method reads as the
+ * one line of `fs` it is, with its failure answer beside it.
+ */
+function orFallback<T, F>(read: () => T, fallback: F): T | F {
     try {
-        const projectDirs = fs.readdirSync(claudeDir);
-
-        for (const projectDir of projectDirs) {
-            const projectPath = path.join(claudeDir, projectDir);
-            const stat = fs.statSync(projectPath);
-
-            if (!stat.isDirectory()) continue;
-
-            // Skip Claude Memory and plugin directories (background agents, not interactive sessions)
-            if (projectDir.includes('claude-plugins') || projectDir.includes('claude-mem')) continue;
-
-            // Find JSONL files modified within cutoff time
-            const files = fs.readdirSync(projectPath)
-                .filter(f => f.endsWith('.jsonl'))
-                // Skip agent files (claude-mem background processes)
-                .filter(f => !f.startsWith('agent-'))
-                .map(f => ({
-                    name: f,
-                    path: path.join(projectPath, f),
-                    mtime: fs.statSync(path.join(projectPath, f)).mtime
-                }))
-                .filter(f => f.mtime.getTime() > cutoffTime)
-                .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-
-            if (files.length === 0) continue;
-
-            // Get token count from EACH active session file (1 per Claude Code tab)
-            for (const file of files) {
-                // Read inside its own try/catch: the outer try around the whole
-                // scan would catch a read failure too, but it would also abandon
-                // every project still unvisited, wiping their status bar items.
-                // Catching here keeps the blast radius at this one session.
-                let lines: string[];
-                try {
-                    lines = splitTranscriptLines(fs.readFileSync(file.path, 'utf-8'));
-                } catch {
-                    continue;
-                }
-
-                const transcript = parseTranscript(lines);
-
-                if (transcript.totalTokens > 0) {
-                    const { name, fullPath } = decodeProjectPath(projectDir);
-                    // Extract short session ID from filename
-                    const sessionId = file.name.replace('.jsonl', '').substring(0, 8);
-                    // Auto-detect context limit based on model
-                    const sessionContextLimit = getContextLimitForModel(transcript.model, contextLimit, modelContextLimits);
-                    sessions.push({
-                        projectName: name,
-                        baseProjectName: name,
-                        sessionTitle: transcript.sessionTitle,
-                        projectPath: fullPath,
-                        sessionId,
-                        sessionFile: file.path,
-                        inputTokens: transcript.inputTokens,
-                        cacheReadTokens: transcript.cacheReadTokens,
-                        cacheCreationTokens: transcript.cacheCreationTokens,
-                        totalTokens: transcript.totalTokens,
-                        percentage: Math.round((transcript.totalTokens / sessionContextLimit) * 100),
-                        lastUpdated: file.mtime,
-                        model: transcript.model,
-                        contextLimit: sessionContextLimit,
-                        firstMessage: transcript.firstMessage,
-                        sessionCreated: transcript.sessionCreated,
-                        wasCleared: transcript.wasCleared
-                    });
-                }
-            }
-        }
-    } catch (e) {
-        console.error('Error scanning Claude projects:', e);
+        return read();
+    } catch {
+        return fallback;
     }
+}
 
-    // Which of the scanned sessions to show, and what to call each one.
-    const activeSessions = selectActiveSessions(sessions);
+/**
+ * Whether one path is a directory, an unreadable entry counting as not one.
+ *
+ * Per entry rather than around the whole listing: one entry the process may
+ * not stat — a stale symlink, a directory it lacks permission on — must skip
+ * only itself and leave the rest of the projects listed.
+ */
+function isDirectory(fullPath: string): boolean {
+    return orFallback(() => fs.statSync(fullPath).isDirectory(), false);
+}
+
+/**
+ * The sessions to render this refresh: what the scan found, ordered for the
+ * bar, with the user's hidden ones removed and the list cut to size.
+ *
+ * Everything left here is a display decision. Which sessions count at all —
+ * the idle cutoff, the exclusions, the percentages, the Superseded rules —
+ * lives behind `scanActiveSessions`, which is handed this window's Settings
+ * snapshot and the current time rather than reaching for either itself.
+ */
+function findActiveSessions(settings: Settings): SessionInfo[] {
+    const projectsDir = getClaudeProjectsDir(settings);
+    const activeSessions = scanActiveSessions(
+        projectsDir,
+        settings,
+        nodeSessionFiles(projectsDir),
+        Date.now(),
+    );
 
     // Sort by mtime for display order (most recent first)
     activeSessions.sort((a, b) => b.lastUpdated.getTime() - a.lastUpdated.getTime());
@@ -509,7 +441,7 @@ async function findActiveSessions(settings: Settings): Promise<SessionInfo[]> {
         return true; // Not hidden
     });
 
-    return visibleSessions.slice(0, 5);
+    return visibleSessions.slice(0, MAX_STATUS_BAR_SESSIONS);
 }
 
 function displayNamesForSessions(
@@ -657,12 +589,12 @@ function pruneStaleItems(seenPaths: Set<string>) {
     }
 }
 
-async function refreshAllSessions() {
+function refreshAllSessions() {
     const settings = currentSettings();
     ensureFileWatcher(settings);
     updateMissingDirItem(settings);
 
-    const sessions = await findActiveSessions(settings);
+    const sessions = findActiveSessions(settings);
     const { warningTokens, dangerTokens, showEmoji } = settings;
     const displayNames = displayNamesForSessions(
         sessions,

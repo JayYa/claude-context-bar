@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as path from 'node:path';
 
-import { selectActiveSessions, SessionInfo } from './sessions';
+import { scanActiveSessions, selectActiveSessions, SessionFiles, SessionInfo } from './sessions';
+import { Settings, SETTINGS_DEFAULTS } from './settings';
 
 // --- fixtures ---------------------------------------------------------------
 //
@@ -273,5 +275,399 @@ describe('selectActiveSessions — a session with no creation time', () => {
 
         assert.equal(nameOf(noCreationTime), 'webapp');
         assert.equal(nameOf(realSession), 'webapp-2');
+    });
+});
+
+// --- scan fixtures ----------------------------------------------------------
+//
+// The scan is driven through the `SessionFiles` port by a nested literal:
+// project directory name -> file name -> what that file's mtime and text read
+// as. It matches the port's four methods one for one, so the fake never has to
+// split a path, and a case's fixture is readable as the directory tree it
+// stands for. A field set to `null` is how the port reports a read it could
+// not make.
+//
+// `line()` is a copy of the helper in `transcript.test.ts`, not a shared
+// import: these fixtures are session *files*, and the two suites should be
+// free to describe their JSONL however each one reads best.
+
+const PROJECTS_DIR = '/home/dev/.claude/projects';
+const NOW = Date.parse('2026-01-01T12:00:00Z');
+
+function minutesAgo(minutes: number): number {
+    return NOW - minutes * 60_000;
+}
+
+interface FakeFile {
+    mtime: number | null;
+    text: string | null;
+}
+
+type FakeTree = Record<string, Record<string, FakeFile>>;
+
+function fakeSessionFiles(tree: FakeTree): SessionFiles {
+    return {
+        listProjectDirs: () => Object.keys(tree),
+        listSessionFiles: (projectDir) => Object.keys(tree[projectDir] ?? {}),
+        mtimeOf: (projectDir, fileName) => tree[projectDir]?.[fileName]?.mtime ?? null,
+        readText: (projectDir, fileName) => tree[projectDir]?.[fileName]?.text ?? null,
+    };
+}
+
+function line(entry: unknown): string {
+    return JSON.stringify(entry);
+}
+
+interface TranscriptFixture {
+    tokens?: number;
+    model?: string;
+    created?: string;
+}
+
+/** One session file's contents: an opening message, then one usage record. */
+function sessionText(fixture: TranscriptFixture = {}): string {
+    const {
+        tokens = 12_000,
+        model = 'claude-opus-5',
+        created = '2026-01-01T10:00:00Z',
+    } = fixture;
+
+    return [
+        line({ type: 'user', message: { content: 'do the thing' }, timestamp: created }),
+        line({ type: 'assistant', message: { model, usage: { input_tokens: tokens } } }),
+    ].join('\n');
+}
+
+/** A readable session file, fresh enough that no cutoff in these cases drops it. */
+function sessionFile(fixture: TranscriptFixture = {}): FakeFile {
+    return { mtime: minutesAgo(1), text: sessionText(fixture) };
+}
+
+function scan(tree: FakeTree, overrides: Partial<Settings> = {}): SessionInfo[] {
+    return scanActiveSessions(
+        PROJECTS_DIR,
+        { ...SETTINGS_DEFAULTS, ...overrides },
+        fakeSessionFiles(tree),
+        NOW,
+    );
+}
+
+/** The one session the tree was built to produce. Fails the case if it is not alone. */
+function onlySession(sessions: SessionInfo[]): SessionInfo {
+    assert.equal(sessions.length, 1, 'expected exactly one scanned session');
+    return sessions[0];
+}
+
+// --- tests ------------------------------------------------------------------
+
+describe('scanActiveSessions — what a scanned session carries', () => {
+    it('reads the tokens, the model and the decoded project name off the file', () => {
+        const session = onlySession(scan({
+            '-home-dev-webapp': {
+                'abcdef12-3456.jsonl': sessionFile({ tokens: 40_000, model: 'claude-opus-5' }),
+            },
+        }));
+
+        assert.equal(session.projectName, 'webapp');
+        assert.equal(session.baseProjectName, 'webapp');
+        assert.equal(session.projectPath, '/home/dev/webapp');
+        assert.equal(session.totalTokens, 40_000);
+        assert.equal(session.model, 'claude-opus-5');
+        assert.equal(session.firstMessage, 'do the thing');
+    });
+
+    it('addresses the session by its path under the projects directory', () => {
+        const session = onlySession(scan({
+            '-home-dev-webapp': { 'abcdef12-3456.jsonl': sessionFile() },
+        }));
+
+        assert.equal(
+            session.sessionFile,
+            path.join(PROJECTS_DIR, '-home-dev-webapp', 'abcdef12-3456.jsonl'),
+        );
+        assert.equal(session.sessionId, 'abcdef12');
+    });
+
+    it('takes the last update from the file mtime, not from the transcript', () => {
+        const session = onlySession(scan({
+            '-home-dev-webapp': {
+                'a.jsonl': { mtime: minutesAgo(2), text: sessionText({ created: '2026-01-01T10:00:00Z' }) },
+            },
+        }));
+
+        assert.equal(session.lastUpdated.getTime(), minutesAgo(2));
+        assert.equal(session.sessionCreated?.toISOString(), '2026-01-01T10:00:00.000Z');
+    });
+});
+
+describe('scanActiveSessions — the idle cutoff', () => {
+    it('keeps a session touched within the idle timeout', () => {
+        const sessions = scan(
+            { '-home-dev-webapp': { 'a.jsonl': { mtime: minutesAgo(4), text: sessionText() } } },
+            { idleTimeout: 300 },
+        );
+
+        assert.deepEqual(names(sessions), ['webapp']);
+    });
+
+    it('drops a session that has been idle longer than the timeout', () => {
+        const sessions = scan(
+            { '-home-dev-webapp': { 'a.jsonl': { mtime: minutesAgo(6), text: sessionText() } } },
+            { idleTimeout: 300 },
+        );
+
+        assert.deepEqual(sessions, []);
+    });
+
+    it('never drops a session for idleness when the timeout is 0', () => {
+        const sessions = scan(
+            { '-home-dev-webapp': { 'a.jsonl': { mtime: minutesAgo(60 * 24 * 365), text: sessionText() } } },
+            { idleTimeout: 0 },
+        );
+
+        assert.deepEqual(names(sessions), ['webapp']);
+    });
+
+    it('measures the cutoff from the time it is given, not from the clock', () => {
+        // Same tree, same settings: only `now` moves, and it moves the answer.
+        const tree: FakeTree = {
+            '-home-dev-webapp': { 'a.jsonl': { mtime: minutesAgo(4), text: sessionText() } },
+        };
+        const settings = { ...SETTINGS_DEFAULTS, idleTimeout: 300 };
+        const files = fakeSessionFiles(tree);
+
+        assert.equal(scanActiveSessions(PROJECTS_DIR, settings, files, NOW).length, 1);
+        assert.equal(
+            scanActiveSessions(PROJECTS_DIR, settings, files, NOW + 5 * 60_000).length,
+            0,
+        );
+    });
+});
+
+describe('scanActiveSessions — what never reaches the status bar', () => {
+    it('skips plugin and Claude Memory project directories', () => {
+        const sessions = scan({
+            '-home-dev-claude-plugins-repo': { 'a.jsonl': sessionFile() },
+            '-home-dev-claude-mem-store': { 'b.jsonl': sessionFile() },
+            '-home-dev-webapp': { 'c.jsonl': sessionFile() },
+        });
+
+        assert.deepEqual(names(sessions), ['webapp']);
+    });
+
+    it('skips background agent files', () => {
+        const sessions = scan({
+            '-home-dev-webapp': {
+                'agent-42.jsonl': sessionFile(),
+                'c.jsonl': sessionFile(),
+            },
+        });
+
+        assert.deepEqual(
+            files(sessions),
+            new Set([path.join(PROJECTS_DIR, '-home-dev-webapp', 'c.jsonl')]),
+        );
+    });
+
+    it('skips files that are not .jsonl', () => {
+        const sessions = scan({
+            '-home-dev-webapp': {
+                'notes.md': { mtime: minutesAgo(1), text: sessionText() },
+                'a.jsonl.bak': { mtime: minutesAgo(1), text: sessionText() },
+            },
+        });
+
+        assert.deepEqual(sessions, []);
+    });
+
+    it('skips a session that has not spent any tokens yet', () => {
+        const sessions = scan({
+            '-home-dev-webapp': {
+                'empty.jsonl': sessionFile({ tokens: 0 }),
+                'used.jsonl': sessionFile({ tokens: 500 }),
+            },
+        });
+
+        assert.deepEqual(
+            files(sessions),
+            new Set([path.join(PROJECTS_DIR, '-home-dev-webapp', 'used.jsonl')]),
+        );
+    });
+
+    it('returns nothing when the projects directory is not there', () => {
+        assert.deepEqual(scan({}), []);
+    });
+});
+
+describe('scanActiveSessions — percentages', () => {
+    it('measures a session against its own model context limit', () => {
+        const session = onlySession(scan({
+            '-home-dev-webapp': {
+                'a.jsonl': sessionFile({ tokens: 100_000, model: 'claude-haiku-4-5' }),
+            },
+        }));
+
+        assert.equal(session.contextLimit, 200_000);
+        assert.equal(session.percentage, 50);
+    });
+
+    it('measures a 1M-window model against 1M', () => {
+        const session = onlySession(scan({
+            '-home-dev-webapp': {
+                'a.jsonl': sessionFile({ tokens: 100_000, model: 'claude-opus-5' }),
+            },
+        }));
+
+        assert.equal(session.contextLimit, 1_000_000);
+        assert.equal(session.percentage, 10);
+    });
+
+    it('lets a per-model override decide the percentage', () => {
+        const session = onlySession(scan(
+            {
+                '-home-dev-webapp': {
+                    'a.jsonl': sessionFile({ tokens: 100_000, model: 'claude-opus-5' }),
+                },
+            },
+            { modelContextLimits: { 'claude-opus-5': 500_000 } },
+        ));
+
+        assert.equal(session.contextLimit, 500_000);
+        assert.equal(session.percentage, 20);
+    });
+
+    it('falls back to the global context limit for a non-Claude model id', () => {
+        const session = onlySession(scan(
+            {
+                '-home-dev-webapp': {
+                    'a.jsonl': sessionFile({ tokens: 100_000, model: 'gpt-5' }),
+                },
+            },
+            { contextLimit: 400_000 },
+        ));
+
+        assert.equal(session.contextLimit, 400_000);
+        assert.equal(session.percentage, 25);
+    });
+
+    it('falls back to the global context limit when the file names no model', () => {
+        const session = onlySession(scan(
+            {
+                '-home-dev-webapp': {
+                    'a.jsonl': { mtime: minutesAgo(1), text: line({ type: 'assistant', message: { usage: { input_tokens: 50_000 } } }) },
+                },
+            },
+            { contextLimit: 200_000 },
+        ));
+
+        assert.equal(session.model, '');
+        assert.equal(session.contextLimit, 200_000);
+        assert.equal(session.percentage, 25);
+    });
+});
+
+describe('scanActiveSessions — one file the port cannot read', () => {
+    it('keeps every other session when a file has no text', () => {
+        const sessions = scan({
+            '-home-dev-webapp': { 'a.jsonl': { mtime: minutesAgo(1), text: null } },
+            '-home-dev-api': { 'b.jsonl': sessionFile() },
+        });
+
+        assert.deepEqual(names(sessions), ['api']);
+    });
+
+    it('keeps every other session when a file has no mtime', () => {
+        const sessions = scan({
+            '-home-dev-webapp': {
+                'a.jsonl': { mtime: null, text: sessionText() },
+                'b.jsonl': sessionFile(),
+            },
+            '-home-dev-api': { 'c.jsonl': sessionFile() },
+        });
+
+        assert.deepEqual(
+            files(sessions),
+            new Set([
+                path.join(PROJECTS_DIR, '-home-dev-webapp', 'b.jsonl'),
+                path.join(PROJECTS_DIR, '-home-dev-api', 'c.jsonl'),
+            ]),
+        );
+    });
+
+    it('reads what it can from a file with a corrupt line', () => {
+        const session = onlySession(scan({
+            '-home-dev-webapp': {
+                'a.jsonl': {
+                    mtime: minutesAgo(1),
+                    text: ['{ not json', line({ type: 'assistant', message: { usage: { input_tokens: 700 } } })].join('\n'),
+                },
+            },
+        }));
+
+        assert.equal(session.totalTokens, 700);
+    });
+});
+
+describe('scanActiveSessions — Superseded sessions and numbering', () => {
+    it('numbers the surviving sessions of one project by creation order', () => {
+        const sessions = scan({
+            '-home-dev-webapp': {
+                'older.jsonl': { mtime: minutesAgo(2), text: sessionText({ created: '2026-01-01T09:00:00Z' }) },
+                'newer.jsonl': { mtime: minutesAgo(1), text: sessionText({ created: '2026-01-01T11:00:00Z' }) },
+            },
+        });
+
+        const nameOf = (fileName: string) =>
+            sessions.find(s => s.sessionFile.endsWith(fileName))!.projectName;
+
+        assert.equal(sessions.length, 2);
+        assert.equal(nameOf('older.jsonl'), 'webapp');
+        assert.equal(nameOf('newer.jsonl'), 'webapp-2');
+    });
+
+    it('gives the bare name to the more recently touched of two sessions with no creation time', () => {
+        // Both creation times read as the epoch, so the numbering has nothing
+        // to order them by and the scan's own order decides. Listed here
+        // stalest-first, the order a directory listing is free to hand back:
+        // the answer must not follow it.
+        const untimed = [
+            line({ type: 'user', message: { content: 'do the thing' } }),
+            line({ type: 'assistant', message: { model: 'claude-opus-5', usage: { input_tokens: 12_000 } } }),
+        ].join('\n');
+
+        const sessions = scan({
+            '-home-dev-webapp': {
+                'stale.jsonl': { mtime: minutesAgo(2), text: untimed },
+                'fresh.jsonl': { mtime: minutesAgo(1), text: untimed },
+            },
+        });
+
+        const nameOf = (fileName: string) =>
+            sessions.find(s => s.sessionFile.endsWith(fileName))!.projectName;
+
+        assert.equal(sessions.length, 2);
+        assert.equal(sessions.every(s => s.sessionCreated === null), true);
+        assert.equal(nameOf('fresh.jsonl'), 'webapp');
+        assert.equal(nameOf('stale.jsonl'), 'webapp-2');
+    });
+
+    it('drops a session that ended on a /clear and keeps the rest', () => {
+        const sessions = scan({
+            '-home-dev-webapp': {
+                'cleared.jsonl': {
+                    mtime: minutesAgo(1),
+                    // Tokens land after the /clear, so this one is dropped for
+                    // being Superseded rather than for being empty.
+                    text: [
+                        line({ type: 'user', message: { content: 'do the thing' }, timestamp: '2026-01-01T10:00:00Z' }),
+                        line({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }),
+                        line({ type: 'assistant', message: { model: 'claude-opus-5', usage: { input_tokens: 900 } } }),
+                    ].join('\n'),
+                },
+            },
+            '-home-dev-api': { 'b.jsonl': sessionFile() },
+        });
+
+        assert.deepEqual(names(sessions), ['api']);
     });
 });
