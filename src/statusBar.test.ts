@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { BarItem, describeStatusBar } from './statusBar';
+import { BarItem, describeStatusBar, StatusBarFacts } from './statusBar';
 import { SessionInfo } from './sessions';
 import { Settings, SETTINGS_DEFAULTS } from './settings';
+import { UsageData, UsageMeter } from './usage';
 
 // --- fixtures ---------------------------------------------------------------
 //
@@ -57,17 +58,63 @@ function session(overrides: SessionOverrides = {}): SessionInfo {
 
 const NOW = Date.parse('2026-01-01T12:30:00Z');
 
+const USAGE_KEY = 'claudeContextBar.usage';
+const MISSING_DIR_KEY = 'claudeContextBar.missingDir';
+
+/**
+ * A refresh's facts, defaulted to the quietest bar there is: no sessions, no
+ * usage, and a projects directory that is where it should be. A case names
+ * only the facts it is about.
+ */
+function facts(overrides: Partial<StatusBarFacts> = {}): StatusBarFacts {
+    return {
+        sessions: [],
+        usage: null,
+        settings: SETTINGS_DEFAULTS,
+        now: NOW,
+        projectsDir: '/home/dev/.claude/projects',
+        projectsDirMissing: false,
+        configDirExplicit: false,
+        ...overrides,
+    };
+}
+
+/** The one item these facts produce; fails loudly if there is not exactly one. */
+function soleItem(overrides: Partial<StatusBarFacts> = {}): BarItem {
+    const items = describeStatusBar(facts(overrides));
+    assert.equal(items.length, 1, 'expected exactly one Bar item');
+    return items[0];
+}
+
 /** The bar these sessions produce under a Settings snapshot patched this far. */
 function bar(sessions: SessionInfo[], overrides: Partial<Settings> = {}): BarItem[] {
-    const settings: Settings = { ...SETTINGS_DEFAULTS, ...overrides };
-    return describeStatusBar({ sessions, settings, now: NOW });
+    return describeStatusBar(facts({ sessions, settings: { ...SETTINGS_DEFAULTS, ...overrides } }));
 }
 
 /** The one item these sessions produce; fails loudly if there is not exactly one. */
 function only(sessions: SessionInfo[], overrides: Partial<Settings> = {}): BarItem {
-    const items = bar(sessions, overrides);
-    assert.equal(items.length, 1, 'expected exactly one Bar item');
-    return items[0];
+    return soleItem({ sessions, settings: { ...SETTINGS_DEFAULTS, ...overrides } });
+}
+
+/** One usage meter. `resetsAt` is an ISO string, or null for "no reset known". */
+function meter(label: string, percentage: number, resetsAt: string | null = null): UsageMeter {
+    return {
+        key: label,
+        label,
+        percentage,
+        resetsAt: resetsAt === null ? null : new Date(resetsAt),
+        isActive: false,
+    };
+}
+
+/** Usage data whose session meter is the first of the meters given. */
+function usage(...meters: UsageMeter[]): UsageData {
+    return { session: meters[0] ?? null, meters };
+}
+
+/** The usage tooltip these meters produce at `now`. */
+function usageTooltip(meters: UsageMeter[], now: number = NOW): string {
+    return soleItem({ usage: usage(...meters), now }).tooltip;
 }
 
 const texts = (items: BarItem[]): string[] => items.map(i => i.text);
@@ -213,6 +260,17 @@ describe('describeStatusBar — display name in session mode', () => {
         );
 
         assert.equal(item.text, 'Refactor the whole stat…: 600');
+    });
+
+    it('drops the space a truncation happens to land on', () => {
+        // The cut falls between "video" and "upscaling", so the ellipsis must
+        // not be left hanging after a space.
+        const item = only(
+            [session({ title: 'Research 480p AI video upscaling' })],
+            { label: 'session', showEmoji: false },
+        );
+
+        assert.equal(item.text, 'Research 480p AI video…: 600');
     });
 
     it('numbers repeated titles, the first one left bare', () => {
@@ -443,5 +501,237 @@ describe('describeStatusBar — pinned quirks', () => {
         assert.deepEqual(texts(items), ['🧠 AS: 600', '⚙️ AS: 600']);
         assert.deepEqual(colors(items), ['#a8d8ea', '#a8d8ea']);
         assert.notEqual(keys(items)[0], keys(items)[1]);
+    });
+});
+
+describe('describeStatusBar — the whole bar', () => {
+    it('describes nothing when there are no sessions, no usage and no warning', () => {
+        assert.deepEqual(describeStatusBar(facts()), []);
+    });
+
+    it('orders the warning, then the sessions, then the subscription usage', () => {
+        const a = session({ project: 'alpha' });
+        const b = session({ project: 'beta' });
+        const items = describeStatusBar(facts({
+            sessions: [a, b],
+            usage: usage(meter('Session (5h)', 7)),
+            projectsDirMissing: true,
+            configDirExplicit: true,
+        }));
+
+        assert.deepEqual(keys(items), [MISSING_DIR_KEY, a.sessionFile, b.sessionFile, USAGE_KEY]);
+    });
+
+    it('ranks that order by priority too, higher sitting further left', () => {
+        const items = describeStatusBar(facts({
+            sessions: [session(), session()],
+            usage: usage(meter('Session (5h)', 7)),
+            projectsDirMissing: true,
+            configDirExplicit: true,
+        }));
+
+        assert.deepEqual(priorities(items), [910, 902, 901, 900]);
+    });
+
+    it('keeps the usage item to the right of a full five sessions', () => {
+        const items = describeStatusBar(facts({
+            sessions: [session(), session(), session(), session(), session()],
+            usage: usage(meter('Session (5h)', 7)),
+        }));
+
+        assert.deepEqual(priorities(items), [905, 904, 903, 902, 901, 900]);
+    });
+});
+
+describe('describeStatusBar — subscription usage item', () => {
+    it('reads as Claude\'s icon and the session meter\'s percentage', () => {
+        const item = soleItem({ usage: usage(meter('Session (5h)', 7)) });
+
+        assert.equal(item.key, USAGE_KEY);
+        assert.equal(item.text, '✴️ 7%');
+    });
+
+    it('carries neither a colour nor a click', () => {
+        const item = soleItem({ usage: usage(meter('Session (5h)', 7)) });
+
+        assert.equal(item.color, undefined);
+        assert.equal(item.command, undefined);
+    });
+
+    it('does not appear when no usage has been fetched', () => {
+        assert.deepEqual(describeStatusBar(facts({ usage: null })), []);
+    });
+
+    it('does not appear when the fetched usage has no session meter', () => {
+        const weekly = meter('Weekly (all models)', 40);
+
+        assert.deepEqual(describeStatusBar(facts({ usage: { session: null, meters: [weekly] } })), []);
+    });
+
+    it('appears on the data alone, without re-reading showUsage', () => {
+        // `showUsage` is judged where the fetch happens, which clears the data
+        // when it is off. A second opinion here could only disagree.
+        const items = describeStatusBar(facts({
+            usage: usage(meter('Session (5h)', 7)),
+            settings: { ...SETTINGS_DEFAULTS, showUsage: false },
+        }));
+
+        assert.deepEqual(texts(items), ['✴️ 7%']);
+    });
+});
+
+describe('describeStatusBar — subscription usage background', () => {
+    const at = (percentage: number, overrides: Partial<Settings> = {}): string =>
+        soleItem({
+            usage: usage(meter('Session (5h)', percentage)),
+            settings: { ...SETTINGS_DEFAULTS, ...overrides },
+        }).background;
+
+    it('reads normal below the warning threshold', () => {
+        assert.equal(at(49), 'normal');
+    });
+
+    it('reads warning at the warning threshold', () => {
+        assert.equal(at(50), 'warning');
+    });
+
+    it('reads danger at the danger threshold', () => {
+        assert.equal(at(75), 'danger');
+    });
+
+    it('grades on a percentage where a session item grades on absolute tokens', () => {
+        // The same 90% of the window: the session item stays normal because
+        // 90K is under the 120K token threshold, while the usage item goes
+        // danger because 90 is over the 75 percent one. Two units, one
+        // vocabulary.
+        const items = describeStatusBar(facts({
+            sessions: [session({ tokens: 90_000, contextLimit: 100_000, percentage: 90 })],
+            usage: usage(meter('Session (5h)', 90)),
+        }));
+
+        assert.deepEqual(backgrounds(items), ['normal', 'danger']);
+    });
+
+    it('treats a zero threshold as met rather than as switched off', () => {
+        // Pinned, not endorsed; see #64. The token path reads a zero threshold
+        // as "never colour"; this one reads it as "always colour", so a user
+        // who zeroes it to switch it off gets the opposite.
+        assert.equal(at(0, { usageWarningThreshold: 0 }), 'warning');
+    });
+});
+
+describe('describeStatusBar — subscription usage tooltip', () => {
+    it('opens with the heading and the table header', () => {
+        const tooltip = usageTooltip([meter('Session (5h)', 7)]);
+
+        assert.ok(tooltip.startsWith('⚡ **Claude Usage**\n\n| Limit | Used | Resets |\n|------|------|------|\n'));
+    });
+
+    it('gives every meter a row, not just the session one', () => {
+        const tooltip = usageTooltip([meter('Session (5h)', 7), meter('Weekly (all models)', 40)]);
+
+        assert.ok(tooltip.includes('| Session (5h) | **7%** |  |\n| Weekly (all models) | **40%** |  |'));
+    });
+
+    it('closes by naming where the numbers come from', () => {
+        assert.ok(usageTooltip([meter('Session (5h)', 7)]).endsWith('\n\n*Subscription rate limits (`/usage`)*'));
+    });
+
+    it('counts a reset more than a day out in whole days', () => {
+        const tooltip = usageTooltip([meter('Session (5h)', 7, '2026-01-04T13:00:00Z')]);
+
+        assert.ok(tooltip.includes('| Session (5h) | **7%** | resets in 3d |'));
+    });
+
+    it('still counts in days when the last day is all but over', () => {
+        // 47h59m: the hours are floored before the days are, so this is 1d.
+        const tooltip = usageTooltip([meter('Session (5h)', 7, '2026-01-03T12:29:00Z')]);
+
+        assert.ok(tooltip.includes('| Session (5h) | **7%** | resets in 1d |'));
+    });
+
+    it('counts a reset later the same day in whole hours', () => {
+        const tooltip = usageTooltip([meter('Session (5h)', 7, '2026-01-01T18:00:00Z')]);
+
+        assert.ok(tooltip.includes('| Session (5h) | **7%** | resets in 5h |'));
+    });
+
+    it('counts a reset within the hour in minutes', () => {
+        const tooltip = usageTooltip([meter('Session (5h)', 7, '2026-01-01T12:50:00Z')]);
+
+        assert.ok(tooltip.includes('| Session (5h) | **7%** | resets in 20m |'));
+    });
+
+    it('rounds a reset seconds away up to a minute rather than to none', () => {
+        const tooltip = usageTooltip([meter('Session (5h)', 7, '2026-01-01T12:30:20Z')]);
+
+        assert.ok(tooltip.includes('| Session (5h) | **7%** | resets in 1m |'));
+    });
+
+    it('says a reset already due is resetting', () => {
+        const tooltip = usageTooltip([meter('Session (5h)', 7, '2026-01-01T12:00:00Z')]);
+
+        assert.ok(tooltip.includes('| Session (5h) | **7%** | resetting |'));
+    });
+
+    it('leaves the cell empty when no reset time is known', () => {
+        const tooltip = usageTooltip([meter('Session (5h)', 7, null)]);
+
+        assert.ok(tooltip.includes('| Session (5h) | **7%** |  |'));
+    });
+
+    it('reads the clock off the facts, not off the machine', () => {
+        // The same meter, two `now`s: the arithmetic is driven from outside.
+        const m = meter('Session (5h)', 7, '2026-01-01T18:00:00Z');
+
+        assert.ok(usageTooltip([m], Date.parse('2026-01-01T12:30:00Z')).includes('resets in 5h |'));
+        assert.ok(usageTooltip([m], Date.parse('2026-01-01T17:30:00Z')).includes('resets in 30m |'));
+    });
+});
+
+describe('describeStatusBar — missing config directory warning', () => {
+    const missing = (overrides: Partial<StatusBarFacts> = {}): Partial<StatusBarFacts> => ({
+        projectsDirMissing: true,
+        configDirExplicit: true,
+        ...overrides,
+    });
+
+    it('warns when a directory the user named holds no projects', () => {
+        const item = soleItem(missing());
+
+        assert.equal(item.key, MISSING_DIR_KEY);
+        assert.equal(item.text, '⚠️ Claude config dir');
+        assert.equal(item.background, 'normal');
+        assert.equal(item.command, undefined);
+    });
+
+    it('names the path it looked in', () => {
+        const item = soleItem(missing({ projectsDir: '/opt/claude/projects' }));
+
+        assert.ok(item.tooltip.startsWith('Claude Context Bar could not find `/opt/claude/projects`.\n\n'));
+    });
+
+    it('names both ways of pointing it somewhere else', () => {
+        const item = soleItem(missing());
+
+        assert.ok(item.tooltip.includes('`claudeContextBar.configDir`'));
+        assert.ok(item.tooltip.includes('`CLAUDE_CONFIG_DIR`'));
+    });
+
+    it('does not appear when the directory is there', () => {
+        assert.deepEqual(describeStatusBar(facts(missing({ projectsDirMissing: false }))), []);
+    });
+
+    it('does not appear when the user never named a directory', () => {
+        // On the default `~/.claude` an absent `projects/` means Claude Code
+        // has not run yet, which is not something to warn about.
+        assert.deepEqual(describeStatusBar(facts(missing({ configDirExplicit: false }))), []);
+    });
+
+    it('sits left of the sessions it is explaining the absence of', () => {
+        const items = describeStatusBar(facts(missing({ sessions: [session()] })));
+
+        assert.deepEqual(keys(items), [MISSING_DIR_KEY, items[1].key]);
+        assert.ok(priorities(items)[0] > priorities(items)[1]);
     });
 });

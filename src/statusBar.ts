@@ -6,8 +6,10 @@
  * decides what an item looks like sits behind it — the emoji keyword table,
  * the short-name and syllable rules, the two palettes and how a colour is
  * picked, display-name resolution with its numbering and truncation, the token
- * abbreviation, the background level, the tooltip markdown and the priority
- * arithmetic — so "why does the bar read like that" has one place to look.
+ * abbreviation, the two background thresholds and the units they each read,
+ * the tooltip markdown, and the priority arithmetic that puts all three kinds
+ * of item in one order — so "why does the bar read like that" has one place to
+ * look.
  *
  * The result is plain data, not vscode objects: `background` is a
  * `ContextTokenLevel`, `tooltip` is the raw markdown, `command` is a plain
@@ -20,12 +22,15 @@
  * and disposing the items, and the three conversions from this plain data to
  * vscode's types. Which sessions reach here at all — the ordering, the
  * sessions the user has clicked away, the cap of five — is display selection
- * and also the caller's, as is the scan behind it.
+ * and also the caller's, as is the scan behind it. So is every fact this
+ * module will not go and fetch: whether the projects directory exists is a
+ * question for `fs`, so it arrives already answered, as a boolean.
  */
 
 import { ContextTokenLevel, getContextTokenLevel } from './contextThreshold';
 import { SessionInfo } from './sessions';
 import { Settings, StatusBarLabel } from './settings';
+import { UsageData, UsageMeter } from './usage';
 
 /** What a click on a Bar item runs, in the shape vscode's `command` takes. */
 export interface BarItemCommand {
@@ -40,7 +45,8 @@ export interface BarItemCommand {
  * Alignment is not a field: every item this extension shows is right-aligned,
  * and a constant that never varies belongs with the caller that applies it.
  * `key` is what the item is reused under across refreshes — a session item
- * uses its session file path.
+ * uses its session file path, and the two items there is only ever one of use
+ * a fixed string each.
  */
 export interface BarItem {
     key: string;
@@ -55,29 +61,52 @@ export interface BarItem {
 /**
  * Everything one refresh needs to decide what the bar looks like.
  *
- * An object rather than positional parameters because the list grows: #68
- * folds the subscription usage item and the missing-directory warning in here,
- * and those add the usage data, the projects directory, whether it is missing
- * and whether the config directory was set explicitly. New facts are new
- * fields; no call site changes shape.
+ * An object rather than positional parameters because the list is seven long,
+ * and two of its members — the projects directory and whether that directory
+ * is missing — sit next to each other and would be easy to swap unnoticed.
+ * New facts are new fields; no call site changes shape.
  */
 export interface StatusBarFacts {
     /** The Active sessions to show, already ordered, filtered and capped. */
     sessions: SessionInfo[];
+    /**
+     * The subscription usage last fetched, or null when there is none to show.
+     * Null covers both "the user switched it off" and "not fetched yet": the
+     * caller clears this when the setting goes off, and this module takes no
+     * second opinion on that setting.
+     */
+    usage: UsageData | null;
     /** The snapshot for this refresh. */
     settings: Settings;
     /**
      * This refresh's time, in epoch milliseconds. Unused by the session items;
-     * the subscription usage tooltip's "resets in" arithmetic needs it (#68),
-     * and it is a parameter for the same reason `scanActiveSessions` takes
-     * one: the arithmetic is the policy, so a test must be able to pin it.
+     * the subscription usage tooltip's "resets in" arithmetic needs it, and it
+     * is a parameter for the same reason `scanActiveSessions` takes one: the
+     * arithmetic is the policy, so a test must be able to pin it.
      */
     now: number;
+    /** Where the sessions were looked for; named by the warning's tooltip. */
+    projectsDir: string;
+    /** Whether that directory is absent. Answered by the caller's `fs`. */
+    projectsDirMissing: boolean;
+    /** Whether the user named a config directory, by setting or environment. */
+    configDirExplicit: boolean;
 }
 
 const STATUS_BAR_PRIORITY_BASE = 900;
 const STATUS_BAR_NAME_MAX = 24;
 const HIDE_SESSION_COMMAND = 'claudeContextBar.hideSession';
+
+/**
+ * The keys of the two items there is only ever one of. Session items key
+ * themselves by session file path, which neither fixed string can collide
+ * with.
+ */
+const USAGE_ITEM_KEY = 'claudeContextBar.usage';
+const MISSING_DIR_ITEM_KEY = 'claudeContextBar.missingDir';
+
+/** Marks the usage item as Claude's own reading rather than a session's. */
+const ITEM_CLAUDE_ICON = '✴️';
 
 const PASTEL_PALETTE = [
     '#a8d8ea',
@@ -106,15 +135,19 @@ const BASE_COLOR_VARIATIONS: Record<string, string[]> = {
  * Describe the whole status bar for one refresh.
  *
  * The array is in display order, leftmost first, and `priority` says the same
- * thing in vscode's own terms: higher sits further left. Session items count
- * down from just above the base so the most recent one is leftmost, leaving
- * the base itself free for the subscription usage item to their right.
+ * thing in vscode's own terms: higher sits further left. The missing-directory
+ * warning leads; the session items follow, counting down from just above the
+ * base so the most recent one is leftmost; and the subscription usage item
+ * takes the base itself and closes the row on their right. One expression, so
+ * "has the usage item drifted left of the sessions" is a question a test can
+ * ask.
  *
- * For now this covers session items only. The subscription usage item and the
- * missing-directory warning still take their old path in the entry point and
- * are folded in by #68.
+ * Each kind carries its own condition for appearing, and an item that does not
+ * appear is simply absent from the array — which is also how the caller is
+ * told to dispose it.
  *
- * @param facts  This refresh's sessions, Settings snapshot and time
+ * @param facts  This refresh's sessions, usage, Settings snapshot, time and
+ *               config directory situation
  */
 export function describeStatusBar(facts: StatusBarFacts): BarItem[] {
     const { sessions, settings } = facts;
@@ -122,13 +155,99 @@ export function describeStatusBar(facts: StatusBarFacts): BarItem[] {
     const displayNames = displayNamesForSessions(sessions, settings);
     const colors = colorsForDisplayNames(displayNames, settings.autoColor, settings.baseColor);
 
-    return sessions.map((session, index) => describeSessionItem(
+    const sessionItems = sessions.map((session, index) => describeSessionItem(
         session,
         displayNames[index],
         colors.get(displayNames[index]) || '#ffffff',
         sessions.length - index,
         settings,
     ));
+
+    return [
+        describeMissingDirItem(facts),
+        ...sessionItems,
+        describeUsageItem(facts),
+    ].filter((item): item is BarItem => item !== null);
+}
+
+/**
+ * The subscription usage item, or null when there is nothing to report.
+ *
+ * The condition is exactly "is there a session meter". `showUsage` is judged
+ * where the data is fetched, which clears the data when the setting goes off,
+ * so re-reading the setting here would be a second opinion on a question that
+ * is already settled — and one that could disagree with it.
+ */
+function describeUsageItem(facts: StatusBarFacts): BarItem | null {
+    const { usage, settings, now } = facts;
+    if (!usage?.session) {
+        return null;
+    }
+
+    return {
+        key: USAGE_ITEM_KEY,
+        text: `${ITEM_CLAUDE_ICON} ${usage.session.percentage}%`,
+        background: usageLevel(
+            usage.session.percentage,
+            settings.usageWarningThreshold,
+            settings.usageDangerThreshold,
+        ),
+        tooltip: buildUsageTooltip(usage, now),
+        // Just below the session items, which start at 901, so this sits
+        // immediately to their right and still left of Claude Code's own.
+        priority: STATUS_BAR_PRIORITY_BASE,
+    };
+}
+
+/**
+ * The warning that the configured Claude directory holds no `projects/`.
+ *
+ * Both halves of the condition matter: a user who never named a directory is
+ * told nothing, because on the default `~/.claude` a missing `projects/` means
+ * Claude Code has not run yet rather than that a setting is wrong. Whether the
+ * directory is there is not asked here — it arrives as a fact.
+ */
+function describeMissingDirItem(facts: StatusBarFacts): BarItem | null {
+    if (!facts.configDirExplicit || !facts.projectsDirMissing) {
+        return null;
+    }
+
+    return {
+        key: MISSING_DIR_ITEM_KEY,
+        text: '⚠️ Claude config dir',
+        background: 'normal',
+        tooltip:
+            `Claude Context Bar could not find \`${facts.projectsDir}\`.\n\n` +
+            `Set \`claudeContextBar.configDir\` to your Claude config folder (the one that contains \`projects/\`), ` +
+            `or set the \`CLAUDE_CONFIG_DIR\` environment variable.`,
+        // Leftmost of everything: a bar showing nothing because it is looking
+        // in the wrong place should say so before it says anything else.
+        priority: STATUS_BAR_PRIORITY_BASE + 10,
+    };
+}
+
+/**
+ * The subscription item's background, graded on a percentage.
+ *
+ * The other unit is next door: session items grade on absolute token counts
+ * through `getContextTokenLevel`, because a context window has a size to
+ * measure against. The `/usage` endpoint reports nothing but a percentage, so
+ * there is no count to threshold here — the two paths share this vocabulary
+ * and nothing else. Note that a threshold of zero does not switch its level
+ * off the way the token path's does; it makes every reading meet it.
+ */
+function usageLevel(
+    percentage: number,
+    warningThreshold: number,
+    dangerThreshold: number,
+): ContextTokenLevel {
+    if (percentage >= dangerThreshold) {
+        return 'danger';
+    }
+    if (percentage >= warningThreshold) {
+        return 'warning';
+    }
+    return 'normal';
 }
 
 /**
@@ -394,5 +513,39 @@ function buildSessionTooltip(session: SessionInfo): string {
         `| **Total** | **${formatTokens(session.totalTokens)}** / ${formatTokens(session.contextLimit)} |\n\n` +
         `🕐 Last updated: ${session.lastUpdated.toLocaleTimeString()}\n\n` +
         `*Click to hide*`
+    );
+}
+
+/**
+ * How long until a meter resets, in the tooltip's own phrasing.
+ *
+ * Coarse on purpose: days once a day is left, then hours, then minutes with a
+ * floor of one, so a meter about to turn over never reads "0m". A meter whose
+ * moment has passed says so; one with no known reset says nothing at all.
+ */
+function formatReset(resetsAt: Date | null, now: number): string {
+    if (!resetsAt) {
+        return '';
+    }
+    const msLeft = resetsAt.getTime() - now;
+    if (msLeft <= 0) {
+        return ' — resetting';
+    }
+    const hours = Math.floor(msLeft / 3_600_000);
+    const days = Math.floor(hours / 24);
+    const rel = days >= 1 ? `${days}d` : hours >= 1 ? `${hours}h` : `${Math.max(1, Math.round(msLeft / 60_000))}m`;
+    return ` — resets in ${rel}`;
+}
+
+function buildUsageTooltip(data: UsageData, now: number): string {
+    const rows = data.meters
+        .map((m: UsageMeter) => `| ${m.label} | **${m.percentage}%** | ${formatReset(m.resetsAt, now).replace(/^ — /, '')} |`)
+        .join('\n');
+
+    return (
+        `⚡ **Claude Usage**\n\n` +
+        `| Limit | Used | Resets |\n|------|------|------|\n` +
+        rows +
+        `\n\n*Subscription rate limits (\`/usage\`)*`
     );
 }
