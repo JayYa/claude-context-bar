@@ -12,7 +12,7 @@ import {
     resolveClaudeConfigDir,
 } from './configDir';
 import { readSettings, Settings } from './settings';
-import { BarItem, describeStatusBar } from './statusBar';
+import { BarItem, describeStatusBar, StatusBarFacts } from './statusBar';
 
 /** The vscode items now on the bar, keyed by their Bar item `key`. */
 const statusBarItems: Map<string, vscode.StatusBarItem> = new Map();
@@ -26,6 +26,26 @@ let refreshTimer: NodeJS.Timeout | null = null;
 // this refresh's facts. Null when the setting is off or nothing arrived yet.
 let usageData: UsageData | null = null;
 let usageTimer: NodeJS.Timeout | null = null;
+
+/** The facts a refresh has to go to disk for; the rest of one costs nothing. */
+type ScanFacts = Pick<
+    StatusBarFacts,
+    'sessions' | 'projectsDir' | 'projectsDirMissing' | 'configDirExplicit'
+>;
+
+/**
+ * What the last scan found, kept so a usage tick can redraw without one.
+ *
+ * `describeStatusBar` describes the whole bar and the caller disposes whatever
+ * it leaves out, so there is no usage-only render to call any more: putting a
+ * new usage percentage on the bar means describing the session items and the
+ * directory warning alongside it. Scanning again to get them would move a read
+ * of every session file onto the usage timer, which the usage tick never did —
+ * so it describes from these instead, and the scan stays on the paths that
+ * always ran it. Null only before the first refresh, which activation runs
+ * before any usage fetch can settle.
+ */
+let lastScan: ScanFacts | null = null;
 
 /** How many session items the status bar will show before it stops. */
 const MAX_STATUS_BAR_SESSIONS = 5;
@@ -319,25 +339,45 @@ function syncBarItems(descriptions: BarItem[]) {
  * One refresh: gather this window's facts, ask what the bar should look like,
  * and make it look like that.
  *
- * Every trigger comes through here — the timer, the file watcher, the focus
- * and configuration listeners, the hide command and a finished usage fetch —
- * so all three kinds of item are described together and none of them can be
- * left behind by a path that forgot about it.
+ * Every trigger that could have changed what a scan would find comes through
+ * here — the session timer, the file watcher, the focus and configuration
+ * listeners, the hide command — so all three kinds of item are described
+ * together and none of them can be left behind by a path that forgot about it.
+ * A finished usage fetch is the one trigger that goes to `renderBar` instead,
+ * having changed nothing on disk.
  */
 function refreshAllSessions() {
     const settings = currentSettings();
     ensureFileWatcher(settings);
 
     const projectsDir = getClaudeProjectsDir(settings);
-    syncBarItems(describeStatusBar({
+    lastScan = {
         sessions: findActiveSessions(settings, projectsDir),
-        usage: usageData,
-        settings,
-        now: Date.now(),
         projectsDir,
         // The one `fs` question the statusBar module refuses to ask itself.
         projectsDirMissing: !fs.existsSync(projectsDir),
         configDirExplicit: hasExplicitConfigDir(settings.configDir, readProcessEnv()),
+    };
+    renderBar(settings);
+}
+
+/**
+ * Draw the bar from the last scan's facts and this snapshot, without scanning.
+ *
+ * The usage path's whole render: a finished fetch changes the usage number and
+ * nothing a scan would answer, so it redraws from what the last refresh
+ * already found. Before that first refresh there is no bar to draw and this
+ * does nothing; the refresh that follows reads `usageData` and picks it up.
+ */
+function renderBar(settings: Settings) {
+    if (!lastScan) {
+        return;
+    }
+    syncBarItems(describeStatusBar({
+        ...lastScan,
+        usage: usageData,
+        settings,
+        now: Date.now(),
     }));
 }
 
@@ -356,7 +396,7 @@ async function refreshUsageData() {
     // of clearing `usageData`, whether the item is shown at all.
     if (!settings.showUsage) {
         usageData = null;
-        refreshAllSessions();
+        renderBar(settings);
         return;
     }
 
@@ -379,9 +419,10 @@ async function refreshUsageData() {
     // on. Judge the setting again — still here, still the only place — against a
     // fresh snapshot, so a result that arrives after the switch is dropped
     // rather than bringing the item back until the next tick.
-    if (!currentSettings().showUsage) {
+    const settled = currentSettings();
+    if (!settled.showUsage) {
         usageData = null;
-        refreshAllSessions();
+        renderBar(settled);
         return;
     }
 
@@ -389,5 +430,5 @@ async function refreshUsageData() {
     if (fetched) {
         usageData = fetched;
     }
-    refreshAllSessions();
+    renderBar(settled);
 }

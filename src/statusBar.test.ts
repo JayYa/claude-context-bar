@@ -92,7 +92,7 @@ function bar(sessions: SessionInfo[], overrides: Partial<Settings> = {}): BarIte
 }
 
 /** The one item these sessions produce; fails loudly if there is not exactly one. */
-function only(sessions: SessionInfo[], overrides: Partial<Settings> = {}): BarItem {
+function soleSessionItem(sessions: SessionInfo[], overrides: Partial<Settings> = {}): BarItem {
     return soleItem({ sessions, settings: { ...SETTINGS_DEFAULTS, ...overrides } });
 }
 
@@ -138,17 +138,17 @@ describe('describeStatusBar — session items', () => {
     });
 
     it('reads as emoji, display name and token count', () => {
-        assert.equal(only([session({ project: 'notes', tokens: 600 })]).text, '🧠 notes: 600');
+        assert.equal(soleSessionItem([session({ project: 'notes', tokens: 600 })]).text, '🧠 notes: 600');
     });
 
     it('drops the emoji and its space when showEmoji is off', () => {
-        assert.equal(only([session()], { showEmoji: false }).text, 'notes: 600');
+        assert.equal(soleSessionItem([session()], { showEmoji: false }).text, 'notes: 600');
     });
 
     it('hands each item a command that hides that session', () => {
         const s = session();
 
-        assert.deepEqual(only([s]).command, {
+        assert.deepEqual(soleSessionItem([s]).command, {
             command: 'claudeContextBar.hideSession',
             title: 'Hide Session',
             arguments: [s.sessionFile],
@@ -172,49 +172,49 @@ describe('describeStatusBar — priority', () => {
 
 describe('describeStatusBar — display name in project mode', () => {
     it('labels an item with the numbered project name', () => {
-        const item = only([session({ project: 'notes-2', base: 'notes' })]);
+        const item = soleSessionItem([session({ project: 'notes-2', base: 'notes' })]);
 
         assert.equal(item.text, '🧠 notes-2: 600');
     });
 
     it('ignores the session title', () => {
-        const item = only([session({ title: 'Refactor the parser' })]);
+        const item = soleSessionItem([session({ title: 'Refactor the parser' })]);
 
         assert.equal(item.text, '🧠 notes: 600');
     });
 
     it('does not truncate a long project name', () => {
-        const item = only([session({ project: 'a-really-quite-long-project-name' })], { showEmoji: false });
+        const item = soleSessionItem([session({ project: 'a-really-quite-long-project-name' })], { showEmoji: false });
 
         assert.equal(item.text, 'a-really-quite-long-project-name: 600');
     });
 
     it('shortens a single word to its initial plus its last syllable in compact mode', () => {
-        const item = only([session({ project: 'webapp' })], { compactMode: true, showEmoji: false });
+        const item = soleSessionItem([session({ project: 'webapp' })], { compactMode: true, showEmoji: false });
 
         assert.equal(item.text, 'Wbapp: 600');
     });
 
     it('shortens a multi-word name to an acronym in compact mode', () => {
-        const item = only([session({ project: 'my-cool-project' })], { compactMode: true, showEmoji: false });
+        const item = soleSessionItem([session({ project: 'my-cool-project' })], { compactMode: true, showEmoji: false });
 
         assert.equal(item.text, 'MCP: 600');
     });
 
     it('leaves a name of five characters or fewer alone in compact mode', () => {
-        const item = only([session({ project: 'notes' })], { compactMode: true, showEmoji: false });
+        const item = soleSessionItem([session({ project: 'notes' })], { compactMode: true, showEmoji: false });
 
         assert.equal(item.text, 'notes: 600');
     });
 
     it('keeps the numeric suffix when it shortens', () => {
-        const item = only([session({ project: 'my-cool-project-2' })], { compactMode: true, showEmoji: false });
+        const item = soleSessionItem([session({ project: 'my-cool-project-2' })], { compactMode: true, showEmoji: false });
 
         assert.equal(item.text, 'MCP-2: 600');
     });
 
     it('takes a custom short name over the syllable rules', () => {
-        const item = only([session({ project: 'my-cool-project' })], {
+        const item = soleSessionItem([session({ project: 'my-cool-project' })], {
             compactMode: true,
             showEmoji: false,
             shortNames: { 'my-cool-project': 'Cool' },
@@ -224,7 +224,7 @@ describe('describeStatusBar — display name in project mode', () => {
     });
 
     it('appends the numeric suffix to a custom short name matched on the base', () => {
-        const item = only([session({ project: 'my-cool-project-3' })], {
+        const item = soleSessionItem([session({ project: 'my-cool-project-3' })], {
             compactMode: true,
             showEmoji: false,
             shortNames: { 'my-cool-project': 'Cool' },
@@ -236,25 +236,25 @@ describe('describeStatusBar — display name in project mode', () => {
 
 describe('describeStatusBar — display name in session mode', () => {
     it('labels an item with the session title', () => {
-        const item = only([session({ title: 'Refactor the parser' })], { label: 'session', showEmoji: false });
+        const item = soleSessionItem([session({ title: 'Refactor the parser' })], { label: 'session', showEmoji: false });
 
         assert.equal(item.text, 'Refactor the parser: 600');
     });
 
     it('falls back to the un-numbered project name when there is no title', () => {
-        const item = only([session({ project: 'notes-2', base: 'notes' })], { label: 'session', showEmoji: false });
+        const item = soleSessionItem([session({ project: 'notes-2', base: 'notes' })], { label: 'session', showEmoji: false });
 
         assert.equal(item.text, 'notes: 600');
     });
 
     it('treats a whitespace-only title as no title at all', () => {
-        const item = only([session({ title: '   ' })], { label: 'session', showEmoji: false });
+        const item = soleSessionItem([session({ title: '   ' })], { label: 'session', showEmoji: false });
 
         assert.equal(item.text, 'notes: 600');
     });
 
     it('truncates a title past 24 characters, ellipsis included', () => {
-        const item = only(
+        const item = soleSessionItem(
             [session({ title: 'Refactor the whole status bar module' })],
             { label: 'session', showEmoji: false },
         );
@@ -265,7 +265,7 @@ describe('describeStatusBar — display name in session mode', () => {
     it('drops the space a truncation happens to land on', () => {
         // The cut falls between "video" and "upscaling", so the ellipsis must
         // not be left hanging after a space.
-        const item = only(
+        const item = soleSessionItem(
             [session({ title: 'Research 480p AI video upscaling' })],
             { label: 'session', showEmoji: false },
         );
@@ -296,20 +296,20 @@ describe('describeStatusBar — emoji', () => {
     it('matches the first keyword row that hits, not the most specific', () => {
         // `crypto` appears under both security and finance; security is listed
         // first, so it wins.
-        assert.equal(only([session({ project: 'crypto-trade' })]).text.slice(0, 2), '🔐');
+        assert.equal(soleSessionItem([session({ project: 'crypto-trade' })]).text.slice(0, 2), '🔐');
     });
 
     it('matches a keyword anywhere in the name, not only on word boundaries', () => {
         // `metadata` contains `data`, so this lands on the data & ML row.
-        assert.equal(only([session({ project: 'metadata-viewer' })]).text.slice(0, 2), '🤖');
+        assert.equal(soleSessionItem([session({ project: 'metadata-viewer' })]).text.slice(0, 2), '🤖');
     });
 
     it('falls back to the brain when no keyword matches', () => {
-        assert.equal(only([session({ project: 'notes' })]).text.slice(0, 2), '🧠');
+        assert.equal(soleSessionItem([session({ project: 'notes' })]).text.slice(0, 2), '🧠');
     });
 
     it('matches case-insensitively', () => {
-        assert.equal(only([session({ project: 'MyGameEngine' })]).text.slice(0, 2), '🎮');
+        assert.equal(soleSessionItem([session({ project: 'MyGameEngine' })]).text.slice(0, 2), '🎮');
     });
 });
 
@@ -348,15 +348,15 @@ describe('describeStatusBar — colours', () => {
 
 describe('describeStatusBar — background level', () => {
     it('reads normal below the warning threshold', () => {
-        assert.equal(only([session({ tokens: 119_000 })]).background, 'normal');
+        assert.equal(soleSessionItem([session({ tokens: 119_000 })]).background, 'normal');
     });
 
     it('reads warning at the warning threshold', () => {
-        assert.equal(only([session({ tokens: 120_000 })]).background, 'warning');
+        assert.equal(soleSessionItem([session({ tokens: 120_000 })]).background, 'warning');
     });
 
     it('reads danger at the danger threshold', () => {
-        assert.equal(only([session({ tokens: 150_000 })]).background, 'danger');
+        assert.equal(soleSessionItem([session({ tokens: 150_000 })]).background, 'danger');
     });
 
     it('thresholds on absolute tokens, not on the percentage of the window', () => {
@@ -371,7 +371,7 @@ describe('describeStatusBar — background level', () => {
     });
 
     it('switches a level off when its threshold is zero', () => {
-        const item = only([session({ tokens: 900_000 })], { warningTokens: 0, dangerTokens: 0 });
+        const item = soleSessionItem([session({ tokens: 900_000 })], { warningTokens: 0, dangerTokens: 0 });
 
         assert.equal(item.background, 'normal');
     });
@@ -379,65 +379,65 @@ describe('describeStatusBar — background level', () => {
 
 describe('describeStatusBar — token counts', () => {
     it('reads a count below a thousand verbatim', () => {
-        assert.equal(only([session({ tokens: 42 })]).text, '🧠 notes: 42');
+        assert.equal(soleSessionItem([session({ tokens: 42 })]).text, '🧠 notes: 42');
     });
 
     it('rounds a count in the thousands to K', () => {
-        assert.equal(only([session({ tokens: 185_400 })]).text, '🧠 notes: 185K');
+        assert.equal(soleSessionItem([session({ tokens: 185_400 })]).text, '🧠 notes: 185K');
     });
 
     it('gives a count in the millions one decimal place', () => {
-        assert.equal(only([session({ tokens: 1_200_000 })]).text, '🧠 notes: 1.2M');
+        assert.equal(soleSessionItem([session({ tokens: 1_200_000 })]).text, '🧠 notes: 1.2M');
     });
 });
 
 describe('describeStatusBar — session tooltip', () => {
     it('opens with the numbered project name and the session id', () => {
         const s = session({ project: 'notes-2', base: 'notes' });
-        const item = only([s]);
+        const item = soleSessionItem([s]);
 
         assert.ok(item.tooltip.startsWith(`**notes-2** (${s.sessionId})\n\n`));
     });
 
     it('carries the title line when the session has a title', () => {
-        const item = only([session({ title: 'Refactor the parser' })]);
+        const item = soleSessionItem([session({ title: 'Refactor the parser' })]);
 
         assert.ok(item.tooltip.includes('🏷️ **Refactor the parser**\n\n'));
     });
 
     it('omits the title line when the session has no title', () => {
-        assert.ok(!only([session()]).tooltip.includes('🏷️'));
+        assert.ok(!soleSessionItem([session()]).tooltip.includes('🏷️'));
     });
 
     it('quotes the first message with a trailing ellipsis', () => {
-        const item = only([session({ firstMessage: 'fix the parser' })]);
+        const item = soleSessionItem([session({ firstMessage: 'fix the parser' })]);
 
         assert.ok(item.tooltip.includes('💬 *"fix the parser..."*\n\n'));
     });
 
     it('omits the first-message line when there is none', () => {
-        assert.ok(!only([session()]).tooltip.includes('💬'));
+        assert.ok(!soleSessionItem([session()]).tooltip.includes('💬'));
     });
 
     it('shows the project path and the model', () => {
-        const item = only([session({ path: '/home/dev/notes', model: 'claude-opus-5' })]);
+        const item = soleSessionItem([session({ path: '/home/dev/notes', model: 'claude-opus-5' })]);
 
         assert.ok(item.tooltip.includes('📁 `/home/dev/notes`\n\n'));
         assert.ok(item.tooltip.includes('🤖 Model: `claude-opus-5`\n\n'));
     });
 
     it('reads the model as Unknown when the transcript never named one', () => {
-        assert.ok(only([session({ model: '' })]).tooltip.includes('🤖 Model: `Unknown`\n\n'));
+        assert.ok(soleSessionItem([session({ model: '' })]).tooltip.includes('🤖 Model: `Unknown`\n\n'));
     });
 
     it('states the context usage as a percentage and an abbreviated count', () => {
-        const item = only([session({ tokens: 185_400, percentage: 93 })]);
+        const item = soleSessionItem([session({ tokens: 185_400, percentage: 93 })]);
 
         assert.ok(item.tooltip.includes('📊 **Context Usage: 93%** (185K)\n\n'));
     });
 
     it('tables the cache reads, the cache writes and the total against the limit', () => {
-        const item = only([session({
+        const item = soleSessionItem([session({
             tokens: 185_400,
             cacheRead: 150_000,
             cacheCreation: 35_400,
@@ -456,13 +456,13 @@ describe('describeStatusBar — session tooltip', () => {
         // The format is the machine's, deliberately: #64 keeps it localized, so
         // the assertion asks the same question the code does.
         const s = session({ updated: '2026-01-01T12:00:00Z' });
-        const item = only([s]);
+        const item = soleSessionItem([s]);
 
         assert.ok(item.tooltip.includes(`🕐 Last updated: ${s.lastUpdated.toLocaleTimeString()}\n\n`));
     });
 
     it('closes by telling the user a click hides the item', () => {
-        assert.ok(only([session()]).tooltip.endsWith('*Click to hide*'));
+        assert.ok(soleSessionItem([session()]).tooltip.endsWith('*Click to hide*'));
     });
 });
 
