@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { getContextTokenLevel } from './contextThreshold';
+import { ContextTokenLevel } from './contextThreshold';
 import { getUsage, UsageData, UsageMeter } from './usage';
 import { scanActiveSessions, SessionFiles, SessionInfo } from './sessions';
 import {
@@ -11,20 +11,11 @@ import {
     readProcessEnv,
     resolveClaudeConfigDir,
 } from './configDir';
-import { readSettings, Settings, StatusBarLabel } from './settings';
-import {
-    disambiguateNames,
-    formatStatusBarText,
-    formatTokens,
-    resolveDisplayName,
-} from './statusBarText';
+import { readSettings, Settings } from './settings';
+import { BarItem, describeStatusBar } from './statusBar';
 
-interface StatusBarEntry {
-    item: vscode.StatusBarItem;
-    sessionFile: string;
-}
-
-const statusBarItems: Map<string, StatusBarEntry> = new Map();
+/** The vscode items now on the bar, keyed by their Bar item `key`. */
+const statusBarItems: Map<string, vscode.StatusBarItem> = new Map();
 // Track manually hidden sessions: sessionFile -> timestamp when hidden
 const hiddenSessions: Map<string, number> = new Map();
 let fileWatcher: fs.FSWatcher | null = null;
@@ -42,29 +33,6 @@ const STATUS_BAR_PRIORITY_BASE = 900;
 /** How many session items the status bar will show before it stops. */
 const MAX_STATUS_BAR_SESSIONS = 5;
 const ITEM_CLAUDE_ICON = '✴️';
-
-const PASTEL_PALETTE = [
-    '#a8d8ea',
-    '#d4a5a5',
-    '#b5d8c7',
-    '#e8d5b7',
-    '#c9b1ff',
-    '#ffd6a5',
-    '#caffbf',
-    '#bdb2ff',
-    '#ffc6ff',
-];
-
-const BASE_COLOR_VARIATIONS: Record<string, string[]> = {
-    'White': ['#ffffff', '#f5f5f5', '#ebebeb', '#e0e0e0', '#d5d5d5'],
-    'Blue': ['#a8d8ea', '#9ecfe0', '#94c6d6', '#8abccc', '#80b2c2'],
-    'Purple': ['#c9b1ff', '#bfa7f5', '#b59deb', '#ab93e1', '#a189d7'],
-    'Cyan': ['#a0e7e5', '#96ddd9', '#8cd3cd', '#82c9c1', '#78bfb5'],
-    'Green': ['#b5d8c7', '#abcebd', '#a1c4b3', '#97baa9', '#8db09f'],
-    'Yellow': ['#ffeaa7', '#f5e09d', '#ebd693', '#e1cc89', '#d7c27f'],
-    'Orange': ['#ffd6a5', '#f5cc9b', '#ebc291', '#e1b887', '#d7ae7d'],
-    'Pink': ['#ffc6ff', '#f5bcf5', '#ebb2eb', '#e1a8e1', '#d79ed7'],
-};
 
 /**
  * The extension's single point of contact with VS Code's settings: every other
@@ -149,7 +117,7 @@ export function activate(context: vscode.ExtensionContext) {
         dispose: () => {
             closeFileWatcher();
             clearTimers();
-            statusBarItems.forEach(entry => entry.item.dispose());
+            statusBarItems.forEach(item => item.dispose());
             statusBarItems.clear();
             usageItem?.dispose();
             usageItem = null;
@@ -162,7 +130,7 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
     closeFileWatcher();
     clearTimers();
-    statusBarItems.forEach(entry => entry.item.dispose());
+    statusBarItems.forEach(item => item.dispose());
     statusBarItems.clear();
     usageItem?.dispose();
     usageItem = null;
@@ -235,117 +203,6 @@ function updateMissingDirItem(settings: Settings) {
     missingDirItem.show();
 }
 
-// Fuzzy emoji matching based on project name
-function getEmojiForProject(projectName: string): string {
-    const name = projectName.toLowerCase();
-
-    // Emoji mappings with keywords
-    const emojiMap: [string[], string][] = [
-        // Music & Audio
-        [['music', 'audio', 'sound', 'song', 'beat', 'dj', 'ableton', 'daw', 'synth', 'midi', 'tone', 'rhythm'], '🎵'],
-        // Games
-        [['game', 'play', 'unity', 'unreal', 'godot', 'arcade', 'puzzle'], '🎮'],
-        // Web & Frontend
-        [['web', 'website', 'frontend', 'react', 'vue', 'angular', 'html', 'css', 'ui', 'ux'], '🌐'],
-        // Backend & API
-        [['api', 'backend', 'server', 'rest', 'graphql', 'microservice'], '⚙️'],
-        // Mobile
-        [['mobile', 'ios', 'android', 'app', 'flutter', 'react-native', 'swift', 'kotlin'], '📱'],
-        // Data & ML
-        [['data', 'ml', 'ai', 'machine', 'learning', 'model', 'train', 'neural', 'tensor'], '🤖'],
-        // Database
-        [['database', 'db', 'sql', 'mongo', 'postgres', 'mysql', 'redis'], '🗄️'],
-        // DevOps & Cloud
-        [['devops', 'cloud', 'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'k8s', 'deploy'], '☁️'],
-        // Security
-        [['security', 'auth', 'crypto', 'encrypt', 'password', 'oauth'], '🔐'],
-        // Testing
-        [['test', 'spec', 'jest', 'mocha', 'cypress', 'selenium'], '🧪'],
-        // Documentation
-        [['doc', 'docs', 'readme', 'wiki', 'guide', 'tutorial'], '📚'],
-        // Tools & Extensions
-        [['tool', 'extension', 'plugin', 'vscode', 'editor'], '🔧'],
-        // Chat & Communication
-        [['chat', 'message', 'slack', 'discord', 'bot'], '💬'],
-        // Finance
-        [['finance', 'money', 'payment', 'bank', 'crypto', 'trade'], '💰'],
-        // Health
-        [['health', 'medical', 'fitness', 'workout'], '❤️'],
-        // E-commerce
-        [['shop', 'store', 'ecommerce', 'cart', 'product'], '🛒'],
-        // Media & Video
-        [['video', 'stream', 'youtube', 'media', 'film', 'movie'], '🎬'],
-        // Art & Design
-        [['art', 'design', 'draw', 'paint', 'sketch', 'creative', 'graphic'], '🎨'],
-    ];
-
-    for (const [keywords, emoji] of emojiMap) {
-        for (const keyword of keywords) {
-            if (name.includes(keyword)) {
-                return emoji;
-            }
-        }
-    }
-
-    // Default brain emoji for coding/AI projects
-    return '🧠';
-}
-
-// Extract the last syllable from a word for compact naming
-// "typescript" → "script", "webpack" → "pack", "frontend" → "tend"
-function extractLastSyllable(word: string): string {
-    // Find a consonant cluster followed by vowel(s) followed by optional consonants at the end
-    // This captures common syllable patterns like "tron", "script", "pack"
-    const match = word.match(/[bcdfghjklmnpqrstvwxz]+[aeiou]+[bcdfghjklmnpqrstvwxz]*$/i);
-    if (match) {
-        return match[0];
-    }
-    // Fallback: just return last 3-4 chars
-    return word.slice(-Math.min(4, word.length));
-}
-
-// Generate a short name for a project
-// Multi-word: "my-cool-project" → "MCP" (acronym)
-// Single-word: "typescript" → "Tscript" (first letter + last syllable)
-// Short names (≤3 chars) are kept as-is
-// Session numbers (-2, -3) are preserved
-function getShortName(projectName: string, customNames: Record<string, string>): string {
-    // Check custom override first (check both full name and base name)
-    if (customNames[projectName]) {
-        return customNames[projectName];
-    }
-
-    // Extract session number suffix if present (e.g., "my-project-2" → "-2")
-    const sessionMatch = projectName.match(/-(\d+)$/);
-    const sessionSuffix = sessionMatch ? sessionMatch[0] : '';
-    const baseName = sessionMatch ? projectName.slice(0, -sessionSuffix.length) : projectName;
-
-    // Check custom override for base name too
-    if (customNames[baseName]) {
-        return customNames[baseName] + sessionSuffix;
-    }
-
-    // If base name is already short (5 chars or less), don't shorten
-    if (baseName.length <= 5) {
-        return projectName;
-    }
-
-    // Split on common delimiters (dash, underscore, space) or camelCase boundaries
-    const words = baseName.split(/[-_\s]|(?=[A-Z])/).filter(w => w.length > 0);
-
-    let shortBase: string;
-    if (words.length > 1) {
-        // Multi-word: create acronym from first letter of each word
-        shortBase = words.map(w => w[0]?.toUpperCase() || '').join('');
-    } else {
-        // Single-word: first letter uppercase + last syllable
-        const lastSyllable = extractLastSyllable(baseName);
-        shortBase = baseName[0].toUpperCase() + lastSyllable;
-    }
-
-    return shortBase + sessionSuffix;
-}
-
 /**
  * Node's `fs` behind the `SessionFiles` port, bound to one projects directory.
  *
@@ -408,7 +265,8 @@ function isDirectory(fullPath: string): boolean {
  * The sessions to render this refresh: what the scan found, ordered for the
  * bar, with the user's hidden ones removed and the list cut to size.
  *
- * Everything left here is a display decision. Which sessions count at all —
+ * Display selection, not display: what those sessions then look like is
+ * `describeStatusBar`'s. Which sessions count at all —
  * the idle cutoff, the exclusions, the percentages, the Superseded rules —
  * lives behind `scanActiveSessions`, which is handed this window's Settings
  * snapshot and the current time rather than reaching for either itself.
@@ -443,44 +301,13 @@ function findActiveSessions(settings: Settings): SessionInfo[] {
     return visibleSessions.slice(0, MAX_STATUS_BAR_SESSIONS);
 }
 
-function displayNamesForSessions(
-    sessions: SessionInfo[],
-    label: StatusBarLabel,
-    compactMode: boolean,
-    shortNames: Record<string, string>,
-): string[] {
-    const raw = sessions.map(session => resolveDisplayName({
-        label,
-        projectName: session.projectName,
-        baseProjectName: session.baseProjectName,
-        sessionTitle: session.sessionTitle,
-        compactProjectName: compactMode ? getShortName(session.projectName, shortNames) : session.projectName,
-    }));
-    if (label === 'session') {
-        return disambiguateNames(raw);
-    }
-    return raw;
-}
-
-function colorsForDisplayNames(names: string[], autoColor: boolean, baseColor: string): Map<string, string> {
-    const palette = autoColor ? PASTEL_PALETTE : (BASE_COLOR_VARIATIONS[baseColor] || BASE_COLOR_VARIATIONS['White']);
-    const map = new Map<string, string>();
-    let colorIndex = 0;
-    for (const name of names) {
-        if (!map.has(name)) {
-            map.set(name, palette[colorIndex % palette.length]);
-            colorIndex++;
-        }
-    }
-    return map;
-}
-
 /**
  * Background for the subscription usage item, driven by a percentage.
  *
  * Only the subscription item uses this: the `/usage` endpoint reports nothing
  * but a percentage, so there is no token count to threshold against. Context
- * items go through `applyContextBackground` instead.
+ * items carry a `ContextTokenLevel` on their Bar item instead, decided by
+ * `describeStatusBar` against absolute token counts.
  */
 function applyUsageBackground(
     item: vscode.StatusBarItem,
@@ -498,92 +325,52 @@ function applyUsageBackground(
 }
 
 /**
- * Background for a context item, driven by absolute token consumption rather
- * than a percentage of the window. See `getContextTokenLevel` for why.
+ * The one place a Bar item's background level becomes a vscode colour.
  */
-function applyContextBackground(
-    item: vscode.StatusBarItem,
-    totalTokens: number,
-    warningTokens: number,
-    dangerTokens: number,
-) {
-    const level = getContextTokenLevel(totalTokens, warningTokens, dangerTokens);
+function themeBackground(level: ContextTokenLevel): vscode.ThemeColor | undefined {
     if (level === 'danger') {
-        item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-    } else if (level === 'warning') {
-        item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    } else {
-        item.backgroundColor = undefined;
+        return new vscode.ThemeColor('statusBarItem.errorBackground');
     }
+    if (level === 'warning') {
+        return new vscode.ThemeColor('statusBarItem.warningBackground');
+    }
+    return undefined;
 }
 
-function buildSessionTooltip(session: SessionInfo): vscode.MarkdownString {
-    const titleLine = session.sessionTitle ? `🏷️ **${session.sessionTitle}**\n\n` : '';
-    // The parser truncates without an ellipsis; adding it is presentation.
-    const firstMsgLine = session.firstMessage ? `💬 *"${session.firstMessage}..."*\n\n` : '';
-    return new vscode.MarkdownString(
-        `**${session.projectName}** (${session.sessionId})\n\n` +
-        titleLine +
-        firstMsgLine +
-        `📁 \`${session.projectPath}\`\n\n` +
-        `🤖 Model: \`${session.model || 'Unknown'}\`\n\n` +
-        `📊 **Context Usage: ${session.percentage}%** (${formatTokens(session.totalTokens)})\n\n` +
-        `| Type | Tokens |\n|------|--------|\n` +
-        `| Cache Read | ${formatTokens(session.cacheReadTokens)} |\n` +
-        `| Cache Creation | ${formatTokens(session.cacheCreationTokens)} |\n` +
-        `| **Total** | **${formatTokens(session.totalTokens)}** / ${formatTokens(session.contextLimit)} |\n\n` +
-        `🕐 Last updated: ${session.lastUpdated.toLocaleTimeString()}\n\n` +
-        `*Click to hide*`
-    );
-}
+/**
+ * Make the bar match a refresh's Bar items: create what is new, update what is
+ * reused, dispose what is no longer described. No display decision is taken
+ * here — every value applied comes from `describeStatusBar`, and the only work
+ * left is turning three of them into vscode's types.
+ *
+ * A reused item keeps the priority it was created with, as it always has:
+ * `StatusBarItem.priority` is fixed at creation, so honouring a changed one
+ * would mean disposing and recreating the item. Left alone deliberately.
+ */
+function syncSessionItems(descriptions: BarItem[]) {
+    for (const description of descriptions) {
+        let item = statusBarItems.get(description.key);
+        if (!item) {
+            item = vscode.window.createStatusBarItem(
+                vscode.StatusBarAlignment.Right,
+                description.priority,
+            );
+            statusBarItems.set(description.key, item);
+        }
 
-function renderSessionItem(
-    session: SessionInfo,
-    index: number,
-    sessionCount: number,
-    displayName: string,
-    color: string,
-    showEmoji: boolean,
-    warningTokens: number,
-    dangerTokens: number,
-    seenPaths: Set<string>,
-) {
-    seenPaths.add(session.sessionFile);
-    let entry = statusBarItems.get(session.sessionFile);
-    if (!entry) {
-        const priority = STATUS_BAR_PRIORITY_BASE + (sessionCount - index);
-        const item = vscode.window.createStatusBarItem(
-            vscode.StatusBarAlignment.Right,
-            priority
-        );
-        entry = { item, sessionFile: session.sessionFile };
-        statusBarItems.set(session.sessionFile, entry);
+        item.text = description.text;
+        item.color = description.color;
+        item.backgroundColor = themeBackground(description.background);
+        item.tooltip = new vscode.MarkdownString(description.tooltip);
+        item.command = description.command;
+        item.show();
     }
 
-    const icon = showEmoji ? getEmojiForProject(session.baseProjectName) : '';
-    entry.item.text = formatStatusBarText(
-        icon,
-        displayName,
-        formatTokens(session.totalTokens),
-    );
-    // Note formatTokens rounds to the nearest K, so a status bar reading
-    // tokens can sit half a K either side of the threshold that colours it.
-    applyContextBackground(entry.item, session.totalTokens, warningTokens, dangerTokens);
-    entry.item.color = color;
-    entry.item.tooltip = buildSessionTooltip(session);
-    entry.item.command = {
-        command: 'claudeContextBar.hideSession',
-        title: 'Hide Session',
-        arguments: [session.sessionFile]
-    };
-    entry.item.show();
-}
-
-function pruneStaleItems(seenPaths: Set<string>) {
-    for (const [sessionFile, entry] of statusBarItems) {
-        if (!seenPaths.has(sessionFile)) {
-            entry.item.dispose();
-            statusBarItems.delete(sessionFile);
+    const described = new Set(descriptions.map(description => description.key));
+    for (const [key, item] of statusBarItems) {
+        if (!described.has(key)) {
+            item.dispose();
+            statusBarItems.delete(key);
         }
     }
 }
@@ -593,36 +380,12 @@ function refreshAllSessions() {
     ensureFileWatcher(settings);
     updateMissingDirItem(settings);
 
-    const sessions = findActiveSessions(settings);
-    const { warningTokens, dangerTokens, showEmoji } = settings;
-    const displayNames = displayNamesForSessions(
-        sessions,
-        settings.label,
-        settings.compactMode,
-        settings.shortNames,
-    );
-    const colorMap = colorsForDisplayNames(
-        displayNames,
-        settings.autoColor,
-        settings.baseColor,
-    );
-    const seenPaths = new Set<string>();
+    syncSessionItems(describeStatusBar({
+        sessions: findActiveSessions(settings),
+        settings,
+        now: Date.now(),
+    }));
 
-    for (let i = 0; i < sessions.length; i++) {
-        renderSessionItem(
-            sessions[i],
-            i,
-            sessions.length,
-            displayNames[i],
-            colorMap.get(displayNames[i]) || '#ffffff',
-            showEmoji,
-            warningTokens,
-            dangerTokens,
-            seenPaths,
-        );
-    }
-
-    pruneStaleItems(seenPaths);
     renderUsageItem(settings);
 }
 
