@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { ContextTokenLevel } from './contextThreshold';
-import { getUsage, UsageData, UsageMeter } from './usage';
+import { getUsage, UsageData } from './usage';
 import { scanActiveSessions, SessionFiles, SessionInfo } from './sessions';
 import {
     claudeProjectsDir,
@@ -20,19 +20,15 @@ const statusBarItems: Map<string, vscode.StatusBarItem> = new Map();
 const hiddenSessions: Map<string, number> = new Map();
 let fileWatcher: fs.FSWatcher | null = null;
 let watchedDir: string | null = null;
-let missingDirItem: vscode.StatusBarItem | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
 
-// Subscription usage shown in a single
-// status bar item to the right of the per-tab context items.
-let usageItem: vscode.StatusBarItem | null = null;
+// The subscription usage last fetched, handed to `describeStatusBar` as one of
+// this refresh's facts. Null when the setting is off or nothing arrived yet.
 let usageData: UsageData | null = null;
 let usageTimer: NodeJS.Timeout | null = null;
 
-const STATUS_BAR_PRIORITY_BASE = 900;
 /** How many session items the status bar will show before it stops. */
 const MAX_STATUS_BAR_SESSIONS = 5;
-const ITEM_CLAUDE_ICON = '✴️';
 
 /**
  * The extension's single point of contact with VS Code's settings: every other
@@ -119,10 +115,6 @@ export function activate(context: vscode.ExtensionContext) {
             clearTimers();
             statusBarItems.forEach(item => item.dispose());
             statusBarItems.clear();
-            usageItem?.dispose();
-            usageItem = null;
-            missingDirItem?.dispose();
-            missingDirItem = null;
         }
     });
 }
@@ -132,10 +124,6 @@ export function deactivate() {
     clearTimers();
     statusBarItems.forEach(item => item.dispose());
     statusBarItems.clear();
-    usageItem?.dispose();
-    usageItem = null;
-    missingDirItem?.dispose();
-    missingDirItem = null;
 }
 
 function getClaudeConfigDir(settings: Settings): string {
@@ -177,30 +165,6 @@ function ensureFileWatcher(settings: Settings) {
     } catch (e) {
         console.error('Failed to set up file watcher:', e);
     }
-}
-
-function updateMissingDirItem(settings: Settings) {
-    const projectsDir = getClaudeProjectsDir(settings);
-    const explicit = hasExplicitConfigDir(settings.configDir, readProcessEnv());
-    const missing = !fs.existsSync(projectsDir);
-    if (!explicit || !missing) {
-        missingDirItem?.dispose();
-        missingDirItem = null;
-        return;
-    }
-    if (!missingDirItem) {
-        missingDirItem = vscode.window.createStatusBarItem(
-            vscode.StatusBarAlignment.Right,
-            STATUS_BAR_PRIORITY_BASE + 10,
-        );
-    }
-    missingDirItem.text = '⚠️ Claude config dir';
-    missingDirItem.tooltip = new vscode.MarkdownString(
-        `Claude Context Bar could not find \`${projectsDir}\`.\n\n` +
-        `Set \`claudeContextBar.configDir\` to your Claude config folder (the one that contains \`projects/\`), ` +
-        `or set the \`CLAUDE_CONFIG_DIR\` environment variable.`
-    );
-    missingDirItem.show();
 }
 
 /**
@@ -271,8 +235,7 @@ function isDirectory(fullPath: string): boolean {
  * lives behind `scanActiveSessions`, which is handed this window's Settings
  * snapshot and the current time rather than reaching for either itself.
  */
-function findActiveSessions(settings: Settings): SessionInfo[] {
-    const projectsDir = getClaudeProjectsDir(settings);
+function findActiveSessions(settings: Settings, projectsDir: string): SessionInfo[] {
     const activeSessions = scanActiveSessions(
         projectsDir,
         settings,
@@ -302,29 +265,6 @@ function findActiveSessions(settings: Settings): SessionInfo[] {
 }
 
 /**
- * Background for the subscription usage item, driven by a percentage.
- *
- * Only the subscription item uses this: the `/usage` endpoint reports nothing
- * but a percentage, so there is no token count to threshold against. Context
- * items carry a `ContextTokenLevel` on their Bar item instead, decided by
- * `describeStatusBar` against absolute token counts.
- */
-function applyUsageBackground(
-    item: vscode.StatusBarItem,
-    percentage: number,
-    warningThreshold: number,
-    dangerThreshold: number,
-) {
-    if (percentage >= dangerThreshold) {
-        item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-    } else if (percentage >= warningThreshold) {
-        item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    } else {
-        item.backgroundColor = undefined;
-    }
-}
-
-/**
  * The one place a Bar item's background level becomes a vscode colour.
  */
 function themeBackground(level: ContextTokenLevel): vscode.ThemeColor | undefined {
@@ -347,7 +287,7 @@ function themeBackground(level: ContextTokenLevel): vscode.ThemeColor | undefine
  * `StatusBarItem.priority` is fixed at creation, so honouring a changed one
  * would mean disposing and recreating the item. Left alone deliberately.
  */
-function syncSessionItems(descriptions: BarItem[]) {
+function syncBarItems(descriptions: BarItem[]) {
     for (const description of descriptions) {
         let item = statusBarItems.get(description.key);
         if (!item) {
@@ -375,72 +315,30 @@ function syncSessionItems(descriptions: BarItem[]) {
     }
 }
 
+/**
+ * One refresh: gather this window's facts, ask what the bar should look like,
+ * and make it look like that.
+ *
+ * Every trigger comes through here — the timer, the file watcher, the focus
+ * and configuration listeners, the hide command and a finished usage fetch —
+ * so all three kinds of item are described together and none of them can be
+ * left behind by a path that forgot about it.
+ */
 function refreshAllSessions() {
     const settings = currentSettings();
     ensureFileWatcher(settings);
-    updateMissingDirItem(settings);
 
-    syncSessionItems(describeStatusBar({
-        sessions: findActiveSessions(settings),
+    const projectsDir = getClaudeProjectsDir(settings);
+    syncBarItems(describeStatusBar({
+        sessions: findActiveSessions(settings, projectsDir),
+        usage: usageData,
         settings,
         now: Date.now(),
+        projectsDir,
+        // The one `fs` question the statusBar module refuses to ask itself.
+        projectsDirMissing: !fs.existsSync(projectsDir),
+        configDirExplicit: hasExplicitConfigDir(settings.configDir, readProcessEnv()),
     }));
-
-    renderUsageItem(settings);
-}
-
-// Render the single global usage item (e.g. "✴️ 7%") to the right of the context items.
-function renderUsageItem(settings: Settings) {
-    // No usage data means nothing to show. `showUsage` is judged only in
-    // `refreshUsageData`, which clears `usageData` when the setting is off —
-    // so this one condition covers both "switched off" and "not fetched yet".
-    if (!usageData?.session) {
-        usageItem?.dispose();
-        usageItem = null;
-        return;
-    }
-
-    const { usageWarningThreshold: warningThreshold, usageDangerThreshold: dangerThreshold } = settings;
-
-    if (!usageItem) {
-        // Priority just below the context items (which start at 901) so this
-        // sits immediately to their right, still left of Claude Code's own items.
-        usageItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, STATUS_BAR_PRIORITY_BASE);
-    }
-
-    const session = usageData.session;
-    usageItem.text = `${ITEM_CLAUDE_ICON} ${session.percentage}%`;
-    applyUsageBackground(usageItem, session.percentage, warningThreshold, dangerThreshold);
-
-    usageItem.tooltip = buildUsageTooltip(usageData);
-    usageItem.show();
-}
-
-function formatReset(resetsAt: Date | null): string {
-    if (!resetsAt) {
-        return '';
-    }
-    const msLeft = resetsAt.getTime() - Date.now();
-    if (msLeft <= 0) {
-        return ' — resetting';
-    }
-    const hours = Math.floor(msLeft / 3_600_000);
-    const days = Math.floor(hours / 24);
-    const rel = days >= 1 ? `${days}d` : hours >= 1 ? `${hours}h` : `${Math.max(1, Math.round(msLeft / 60_000))}m`;
-    return ` — resets in ${rel}`;
-}
-
-function buildUsageTooltip(data: UsageData): vscode.MarkdownString {
-    const rows = data.meters
-        .map((m: UsageMeter) => `| ${m.label} | **${m.percentage}%** | ${formatReset(m.resetsAt).replace(/^ — /, '')} |`)
-        .join('\n');
-
-    return new vscode.MarkdownString(
-        `⚡ **Claude Usage**\n\n` +
-        `| Limit | Used | Resets |\n|------|------|------|\n` +
-        rows +
-        `\n\n*Subscription rate limits (\`/usage\`)*`
-    );
 }
 
 let usageFetchInFlight = false;
@@ -458,7 +356,7 @@ async function refreshUsageData() {
     // of clearing `usageData`, whether the item is shown at all.
     if (!settings.showUsage) {
         usageData = null;
-        renderUsageItem(settings);
+        refreshAllSessions();
         return;
     }
 
@@ -481,10 +379,9 @@ async function refreshUsageData() {
     // on. Judge the setting again — still here, still the only place — against a
     // fresh snapshot, so a result that arrives after the switch is dropped
     // rather than bringing the item back until the next tick.
-    const settled = currentSettings();
-    if (!settled.showUsage) {
+    if (!currentSettings().showUsage) {
         usageData = null;
-        renderUsageItem(settled);
+        refreshAllSessions();
         return;
     }
 
@@ -492,5 +389,5 @@ async function refreshUsageData() {
     if (fetched) {
         usageData = fetched;
     }
-    renderUsageItem(settled);
+    refreshAllSessions();
 }
