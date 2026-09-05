@@ -102,8 +102,8 @@ const HIDE_SESSION_COMMAND = 'claudeContextBar.hideSession';
  * themselves by session file path, which neither fixed string can collide
  * with.
  */
-const USAGE_ITEM_KEY = 'claudeContextBar.usage';
-const MISSING_DIR_ITEM_KEY = 'claudeContextBar.missingDir';
+const USAGE_BAR_ITEM_KEY = 'claudeContextBar.usage';
+const MISSING_DIR_BAR_ITEM_KEY = 'claudeContextBar.missingDir';
 
 /** Marks the usage item as Claude's own reading rather than a session's. */
 const ITEM_CLAUDE_ICON = '✴️';
@@ -185,7 +185,7 @@ function describeUsageItem(facts: StatusBarFacts): BarItem | null {
     }
 
     return {
-        key: USAGE_ITEM_KEY,
+        key: USAGE_BAR_ITEM_KEY,
         text: `${ITEM_CLAUDE_ICON} ${usage.session.percentage}%`,
         background: usageLevel(
             usage.session.percentage,
@@ -213,7 +213,7 @@ function describeMissingDirItem(facts: StatusBarFacts): BarItem | null {
     }
 
     return {
-        key: MISSING_DIR_ITEM_KEY,
+        key: MISSING_DIR_BAR_ITEM_KEY,
         text: '⚠️ Claude config dir',
         background: 'normal',
         tooltip:
