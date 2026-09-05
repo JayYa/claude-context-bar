@@ -11,13 +11,12 @@ import {
     readProcessEnv,
     resolveClaudeConfigDir,
 } from './configDir';
-import { readSettings, Settings } from './settings';
+import { readSettings, Settings, StatusBarLabel } from './settings';
 import {
     disambiguateNames,
     formatStatusBarText,
     formatTokens,
     resolveDisplayName,
-    StatusBarLabel,
 } from './statusBarText';
 
 interface StatusBarEntry {

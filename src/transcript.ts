@@ -6,8 +6,6 @@
  * job. See `Transcript` for what the value carries.
  */
 
-import { pickSessionTitle, readTitleFromEntry } from './statusBarText';
-
 /**
  * Everything one Claude Code session file says about its conversation.
  *
@@ -211,6 +209,40 @@ function parse(lines: readonly string[]): Transcript {
         skippedLines,
         clearIndex,
     };
+}
+
+function firstNonEmptyString(...vals: unknown[]): string {
+    for (const v of vals) {
+        if (typeof v === 'string' && v.trim()) {
+            return v.trim();
+        }
+    }
+    return '';
+}
+
+/**
+ * Read title fields from a Claude Code JSONL entry.
+ * custom-title (from /rename or -n) and ai-title (generated summary) are the
+ * two types Claude Code writes; field names are tolerated loosely.
+ */
+function readTitleFromEntry(entry: any): { customTitle?: string; aiTitle?: string } {
+    if (!entry || typeof entry !== 'object') {
+        return {};
+    }
+    if (entry.type === 'custom-title') {
+        const customTitle = firstNonEmptyString(entry.customTitle, entry.title, entry.name);
+        return customTitle ? { customTitle } : {};
+    }
+    if (entry.type === 'ai-title') {
+        const aiTitle = firstNonEmptyString(entry.aiTitle, entry.title);
+        return aiTitle ? { aiTitle } : {};
+    }
+    return {};
+}
+
+/** Prefer a user-chosen name over the generated title. */
+function pickSessionTitle(customTitle: string, aiTitle: string): string {
+    return firstNonEmptyString(customTitle, aiTitle);
 }
 
 /** The `message.content` of a user entry, or undefined if this is not one. */

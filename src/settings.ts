@@ -15,7 +15,11 @@
  * setting to only one side fails that test.
  */
 
-import { StatusBarLabel } from './statusBarText';
+/**
+ * What a status bar item is named after: the project it belongs to, or the
+ * session's own title.
+ */
+export type StatusBarLabel = 'project' | 'session';
 
 /**
  * Port for reading setting values: by key, with a fallback for when the key is
